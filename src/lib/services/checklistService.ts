@@ -1,0 +1,193 @@
+
+import { db } from '@/lib/firebase';
+import type { Checklist } from '@/lib/types';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  Timestamp,
+  limit
+} from 'firebase/firestore';
+
+const checklistsCollection = collection(db, 'checklists');
+
+export async function getChecklists(filters?: { vehicleId?: string; operatorId?: string; date?: string }): Promise<Checklist[]> {
+  let q = query(checklistsCollection, orderBy('date', 'desc'));
+
+  if (filters?.vehicleId) {
+    q = query(q, where('vehicleId', '==', filters.vehicleId));
+  }
+  if (filters?.operatorId) {
+    q = query(q, where('operatorId', '==', filters.operatorId));
+  }
+  if (filters?.date) {
+    const startDate = Timestamp.fromDate(new Date(filters.date + "T00:00:00"));
+    const endDate = Timestamp.fromDate(new Date(filters.date + "T23:59:59"));
+    q = query(q, where('date', '>=', startDate), where('date', '<=', endDate));
+  }
+
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(doc => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      ...data,
+      date: data.date instanceof Timestamp ? data.date.toDate().toISOString() : data.date
+    } as Checklist;
+  });
+}
+
+export async function getChecklistById(id: string): Promise<Checklist | null> {
+  const docRef = doc(db, 'checklists', id);
+  const docSnap = await getDoc(docRef);
+  if (docSnap.exists()) {
+    const data = docSnap.data();
+    return {
+        id: docSnap.id,
+        ...data,
+        date: data.date instanceof Timestamp ? data.date.toDate().toISOString() : data.date
+    } as Checklist;
+  }
+  return null;
+}
+
+export async function addChecklist(checklistData: Omit<Checklist, 'id' | 'date'> & { date: Date }): Promise<Checklist> {
+  const dataToSave = {
+    ...checklistData,
+    date: Timestamp.fromDate(checklistData.date),
+  };
+  const docRef = await addDoc(checklistsCollection, dataToSave);
+  return {
+    id: docRef.id,
+    ...checklistData,
+    date: checklistData.date.toISOString()
+  };
+}
+
+export async function updateChecklist(id: string, checklistData: Partial<Omit<Checklist, 'id'>>): Promise<void> {
+  const docRef = doc(db, 'checklists', id);
+  const dataToUpdate = { ...checklistData };
+  if (checklistData.date && typeof checklistData.date === 'string') {
+    (dataToUpdate as any).date = Timestamp.fromDate(new Date(checklistData.date));
+  } else if (checklistData.date && checklistData.date instanceof Date) {
+     (dataToUpdate as any).date = Timestamp.fromDate(checklistData.date);
+  }
+  await updateDoc(docRef, dataToUpdate);
+}
+
+export async function deleteChecklist(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'checklists', id));
+}
+
+export async function getChecklistsForOperator(
+  operatorId: string,
+  filters?: { vehicleId?: string; date?: string }
+): Promise<Checklist[]> {
+  let q = query(checklistsCollection, where('operatorId', '==', operatorId));
+
+  if (filters?.vehicleId) {
+    q = query(q, where('vehicleId', '==', filters.vehicleId));
+  }
+  if (filters?.date) {
+    const startDate = Timestamp.fromDate(new Date(filters.date + "T00:00:00Z")); // Use Z for UTC context if dates are stored in UTC
+    const endDate = Timestamp.fromDate(new Date(filters.date + "T23:59:59Z"));
+    q = query(q, where('date', '>=', startDate), where('date', '<=', endDate));
+  }
+  
+  q = query(q, orderBy('date', 'desc')); // Apply ordering after all filters
+
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(doc => {
+    const data = doc.data();
+    return {
+        id: doc.id,
+        ...data,
+        date: data.date instanceof Timestamp ? data.date.toDate().toISOString() : data.date
+    } as Checklist;
+  });
+}
+
+export async function getTodayChecklistForVehicle(vehicleId: string, operatorId: string): Promise<Checklist | null> {
+  const today = new Date();
+  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
+  const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+
+  const q = query(checklistsCollection,
+    where('vehicleId', '==', vehicleId),
+    where('operatorId', '==', operatorId),
+    where('date', '>=', Timestamp.fromDate(startOfDay)),
+    where('date', '<=', Timestamp.fromDate(endOfDay)),
+    orderBy('date', 'desc'),
+    limit(1)
+  );
+  const snapshot = await getDocs(q);
+  if (snapshot.empty) {
+    return null;
+  }
+  const data = snapshot.docs[0].data();
+  return {
+    id: snapshot.docs[0].id,
+    ...data,
+    date: data.date instanceof Timestamp ? data.date.toDate().toISOString() : data.date
+  } as Checklist;
+}
+
+export async function getChecklistForCurrentPossession(
+  vehicleId: string,
+  operatorId: string,
+  pickedUpDateISO: string // Data de quando o veículo foi pego, em formato ISO string
+): Promise<Checklist | null> {
+  // Se não há data de retirada válida, não há posse atual para verificar.
+  // Isso também previne erros se pickedUpDateISO for null ou undefined.
+  if (!pickedUpDateISO || typeof pickedUpDateISO !== 'string') {
+      console.warn('getChecklistForCurrentPossession: pickedUpDateISO é inválida ou não fornecida.');
+      return null;
+  }
+
+  let pickedUpTimestamp;
+  try {
+    pickedUpTimestamp = Timestamp.fromDate(new Date(pickedUpDateISO));
+  } catch (error) {
+    console.error('getChecklistForCurrentPossession: Erro ao converter pickedUpDateISO para Timestamp:', error);
+    return null; // Retorna null se a data for inválida
+  }
+
+
+  const q = query(
+    checklistsCollection,
+    where('vehicleId', '==', vehicleId),
+    where('operatorId', '==', operatorId),
+    where('date', '>=', pickedUpTimestamp), // Checklist feito DEPOIS ou NO MOMENTO da retirada
+    orderBy('date', 'desc'),
+    limit(1)
+  );
+
+  try {
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+      return null;
+    }
+    const data = snapshot.docs[0].data();
+    return {
+      id: snapshot.docs[0].id,
+      ...data,
+      date: data.date instanceof Timestamp ? data.date.toDate().toISOString() : data.date,
+    } as Checklist;
+  } catch (error) {
+    console.error("Erro ao buscar checklist para posse atual:", error);
+    // Dependendo da política de erro, você pode querer relançar o erro ou retornar null
+    // Se for um erro de índice ausente, o Firebase geralmente lança um erro específico.
+    if ((error as any)?.code === 'failed-precondition') {
+        console.warn("Firestore query failed, likely due to a missing composite index. Please check Firebase console for index creation link.");
+    }
+    return null;
+  }
+}
+
