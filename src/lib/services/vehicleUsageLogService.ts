@@ -2,7 +2,7 @@
 'use server';
 
 import { db } from '@/lib/firebase';
-import type { Vehicle, VehicleUsageLog } from '@/lib/types';
+import type { VehicleUsageLog } from '@/lib/types';
 import {
   collection,
   addDoc,
@@ -14,37 +14,20 @@ import {
   Timestamp,
   orderBy,
   limit,
-  getDoc
 } from 'firebase/firestore';
 import { differenceInMinutes } from 'date-fns';
 
 const vehicleUsageLogsCollection = collection(db, 'vehicleUsageLogs');
-const vehiclesCollection = collection(db, 'vehicles'); // For fetching vehicle mileage
 
 export async function createVehicleUsageLog(
   vehicleId: string,
   vehiclePlate: string,
   operatorId: string,
-  operatorName: string
+  operatorName: string,
+  initialMileage: number // Now a required parameter
 ): Promise<string> {
   const pickedUpTimestamp = new Date();
   
-  let initialMileage: number = 0; // Initialize with 0
-  try {
-    const vehicleDocRef = doc(vehiclesCollection, vehicleId);
-    const vehicleDocSnap = await getDoc(vehicleDocRef);
-    if (vehicleDocSnap.exists()) {
-      const vehicleData = vehicleDocSnap.data() as Vehicle;
-      initialMileage = vehicleData.mileage ?? 0; // Use existing mileage or default to 0
-    } else {
-      console.warn(`Vehicle with ID ${vehicleId} not found when creating usage log. Initial mileage set to 0.`);
-      initialMileage = 0; 
-    }
-  } catch (error) {
-    console.error(`Error fetching vehicle ${vehicleId} for initial mileage:`, error);
-    initialMileage = 0; 
-  }
-
   const logEntry: Omit<VehicleUsageLog, 'id' | 'returnedTimestamp' | 'durationMinutes' | 'finalMileage' | 'kmDriven'> = {
     vehicleId,
     vehiclePlate,
@@ -52,7 +35,7 @@ export async function createVehicleUsageLog(
     operatorName,
     pickedUpTimestamp: pickedUpTimestamp.toISOString(),
     status: 'active',
-    initialMileage,
+    initialMileage, // Use the provided initialMileage
   };
   const docRef = await addDoc(vehicleUsageLogsCollection, {
     ...logEntry,
@@ -82,7 +65,7 @@ export async function completeVehicleUsageLog(
   }
 
   const logDoc = snapshot.docs[0];
-  const logData = logDoc.data() as Omit<VehicleUsageLog, 'id' | 'pickedUpTimestamp'> & { pickedUpTimestamp: Timestamp, initialMileage?: number };
+  const logData = logDoc.data() as Omit<VehicleUsageLog, 'id' | 'pickedUpTimestamp'> & { pickedUpTimestamp: Timestamp, initialMileage: number };
   
   const returnedTimestamp = new Date();
   let durationMinutes = 0;
@@ -94,7 +77,8 @@ export async function completeVehicleUsageLog(
      durationMinutes = differenceInMinutes(returnedTimestamp, new Date(logData.pickedUpTimestamp));
   }
 
-  if (typeof logData.initialMileage === 'number' && typeof finalMileage === 'number') {
+  // initialMileage is now guaranteed to be a number
+  if (typeof finalMileage === 'number') {
     if (finalMileage >= logData.initialMileage) {
       kmDriven = finalMileage - logData.initialMileage;
     } else {
@@ -246,4 +230,28 @@ export async function getWeeklyMileageByOperator(startDate: Date, endDate: Date)
   const result = Object.values(operatorMileageMap);
 
   return result;
+}
+
+// Function to check if an active usage log exists for a vehicle and operator
+export async function getActiveUsageLogForVehicleAndOperator(vehicleId: string, operatorId: string): Promise<VehicleUsageLog | null> {
+    const q = query(
+        vehicleUsageLogsCollection,
+        where('vehicleId', '==', vehicleId),
+        where('operatorId', '==', operatorId),
+        where('status', '==', 'active'),
+        orderBy('pickedUpTimestamp', 'desc'),
+        limit(1)
+    );
+
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+        return null;
+    }
+    const data = snapshot.docs[0].data();
+    return {
+        id: snapshot.docs[0].id,
+        ...data,
+        pickedUpTimestamp: data.pickedUpTimestamp instanceof Timestamp ? data.pickedUpTimestamp.toDate().toISOString() : data.pickedUpTimestamp,
+        // returnedTimestamp will be null or undefined for active logs
+    } as VehicleUsageLog;
 }

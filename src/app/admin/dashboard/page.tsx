@@ -21,6 +21,8 @@ import { getUsers } from '@/lib/services/userService';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
+import { addDays, differenceInDays, isPast, isToday, format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 export default function AdminDashboardPage() {
    const { currentUser, loading: authLoading } = useAuth();
@@ -65,17 +67,136 @@ export default function AdminDashboardPage() {
     return <Container><PageTitle title="Erro ao carregar dados" description={queryError.message} /></Container>;
   }
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const thirtyDaysFromNow = addDays(today, 30);
+  const kmAlertThreshold = 10000; // 10.000 km
 
   const recentMaintenances = maintenances
-    ?.sort((a,b) => {
-        const dateA = a.scheduledDate ? new Date(a.scheduledDate + "T00:00:00") : new Date(0);
-        const dateB = b.scheduledDate ? new Date(b.scheduledDate + "T00:00:00") : new Date(0);
-        return dateB.getTime() - dateA.getTime();
+    ?.filter(maint => {
+      if (maint.status !== 'planned' && maint.status !== 'in_progress') return false;
+
+      const vehicle = vehicles?.find(v => v.id === maint.vehicleId);
+      // If vehicle data is not available yet, or vehicle not found, we can't check KM.
+      // Decide if you want to include it based on date only, or exclude. For now, exclude if KM check is crucial.
+      // For this logic, if KM is part of the check, vehicle must exist.
+      // If scheduledKm is defined, vehicle must be found.
+      if (maint.scheduledKm !== undefined && maint.scheduledKm !== null && !vehicle) return false;
+
+
+      let isRelevantByDate = false;
+      if (maint.scheduledDate) {
+        const scheduledDateObj = new Date(maint.scheduledDate + "T00:00:00"); // Ensure comparison at midnight
+        // Relevant if scheduled in the next 30 days (inclusive of today) OR if it's already past due
+        if (scheduledDateObj <= thirtyDaysFromNow) { 
+          isRelevantByDate = true;
+        }
+      }
+
+      let isRelevantByKm = false;
+      if (maint.scheduledKm && vehicle && typeof vehicle.mileage === 'number') {
+        if (vehicle.mileage >= maint.scheduledKm - kmAlertThreshold) {
+          isRelevantByKm = true;
+        }
+      }
+      return isRelevantByDate || isRelevantByKm;
     })
-    .slice(0,5) || [];
+    .map(maint => {
+      const vehicle = vehicles?.find(v => v.id === maint.vehicleId);
+      let isOverdueByDate = false;
+      let isOverdueByKm = false;
+      let dateDetails = "";
+      let kmDetails = "";
+
+      if (maint.scheduledDate) {
+          const scheduledDateObj = new Date(maint.scheduledDate + "T00:00:00");
+          const daysDiff = differenceInDays(scheduledDateObj, today); // positive if future, negative if past
+          if (isPast(scheduledDateObj) && !isToday(scheduledDateObj)) {
+              isOverdueByDate = true;
+              dateDetails = `Venceu há ${Math.abs(daysDiff)} dia(s)`;
+          } else if (isToday(scheduledDateObj)) {
+              dateDetails = `Vence hoje`;
+          } else if (daysDiff > 0 && daysDiff <= 30) {
+              dateDetails = `Vence em ${daysDiff} dia(s)`;
+          } else if (daysDiff > 30) {
+              // Not "overdue" yet, but might be relevant by KM. Show date if available.
+              dateDetails = `Agendado: ${format(scheduledDateObj, 'dd/MM/yyyy', {locale: ptBR})}`;
+          }
+      }
+
+      if (maint.scheduledKm && vehicle && typeof vehicle.mileage === 'number') {
+          const kmDiff = maint.scheduledKm - vehicle.mileage;
+          if (vehicle.mileage >= maint.scheduledKm) {
+              isOverdueByKm = true;
+              kmDetails = `KM Vencido (Atual: ${vehicle.mileage.toLocaleString('pt-BR')})`;
+          } else if (kmDiff <= kmAlertThreshold) {
+              kmDetails = `Faltam ${kmDiff.toLocaleString('pt-BR')} KM`;
+          }
+      }
+      
+      const isOverdue = isOverdueByDate || isOverdueByKm;
+      
+      let urgencyScore = 3; // Default: upcoming
+      if (isOverdue) urgencyScore = 1; // Overdue
+      else if (
+        (maint.scheduledDate && isToday(new Date(maint.scheduledDate + "T00:00:00"))) ||
+        (maint.scheduledKm && vehicle && typeof vehicle.mileage === 'number' && (maint.scheduledKm - vehicle.mileage <= 1000 && maint.scheduledKm - vehicle.mileage >=0)) // Within 1000km
+      ) {
+        urgencyScore = 2; // Due today or very soon by KM
+      }
+
+
+      return {
+          ...maint,
+          isOverdue,
+          isOverdueByDate,
+          isOverdueByKm,
+          dateDetails,
+          kmDetails,
+          urgencyScore,
+          // For sorting, ensure scheduledDate and kmDifference are available or have fallbacks
+          _scheduledDateObj: maint.scheduledDate ? new Date(maint.scheduledDate + "T00:00:00") : new Date(8640000000000000), // Far future for sorting if no date
+          _kmDifference: (maint.scheduledKm && vehicle && typeof vehicle.mileage === 'number') ? (maint.scheduledKm - vehicle.mileage) : Infinity,
+      };
+    })
+    .sort((a, b) => {
+      if (a.urgencyScore !== b.urgencyScore) {
+          return a.urgencyScore - b.urgencyScore;
+      }
+      // If same urgency score, sort by proximity
+      if (a.isOverdue && b.isOverdue) { // Both overdue
+          if (a.isOverdueByDate && !b.isOverdueByDate) return -1;
+          if (!a.isOverdueByDate && b.isOverdueByDate) return 1;
+          if (a.isOverdueByDate && b.isOverdueByDate) {
+               return a._scheduledDateObj.getTime() - b._scheduledDateObj.getTime(); // Earlier overdue date first
+          }
+          return a._kmDifference - b._kmDifference; // More KM overdue first (more negative _kmDifference)
+      }
+      if (a.isOverdue) return -1;
+      if (b.isOverdue) return 1;
+
+      // Both not overdue, sort by whichever is "closer"
+      const dateProximityA = a.scheduledDate ? differenceInDays(a._scheduledDateObj, today) : Infinity;
+      const dateProximityB = b.scheduledDate ? differenceInDays(b._scheduledDateObj, today) : Infinity;
+      const kmProximityA = a._kmDifference > 0 ? a._kmDifference : Infinity; // only consider positive diff (km remaining)
+      const kmProximityB = b._kmDifference > 0 ? b._kmDifference : Infinity;
+
+      if(dateProximityA !== dateProximityB && dateProximityA !== Infinity && dateProximityB !== Infinity) {
+          return dateProximityA - dateProximityB; // Closer date first
+      }
+      if(kmProximityA !== kmProximityB && kmProximityA !== Infinity && kmProximityB !== Infinity) {
+          return kmProximityA - kmProximityB; // Closer KM first
+      }
+      // Fallback if one has date and other has KM, or other complex cases
+      if (a.scheduledDate && !b.scheduledDate) return -1; // Prioritize date-scheduled
+      if (!a.scheduledDate && b.scheduledDate) return 1;
+      return a._scheduledDateObj.getTime() - b._scheduledDateObj.getTime(); // Default date sort
+    })
+    .slice(0, 5) || [];
+
 
   const recentIncidents = incidents
-    ?.filter(i => i.status !== 'resolved') // Filter out resolved incidents
+    ?.filter(i => i.status !== 'resolved') 
     .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .slice(0,5) || [];
 
@@ -93,6 +214,8 @@ export default function AdminDashboardPage() {
     if (!operatorId) return 'N/A';
     return users?.find(u => u.id === operatorId)?.name || 'Desconhecido';
   };
+  
+  const statusMap: Record<Maintenance['status'], string> = { planned: 'Planejada', in_progress: 'Em Progresso', completed: 'Concluída', cancelled: 'Cancelada'};
 
 
   return (
@@ -116,9 +239,9 @@ export default function AdminDashboardPage() {
           <CardHeader>
             <CardTitle className="flex items-center">
               <WrenchIcon className="mr-2 h-5 w-5 text-primary" />
-              Manutenções Recentes
+              Manutenções Requerendo Atenção
             </CardTitle>
-            <CardDescription>Últimas manutenções agendadas ou em progresso.</CardDescription>
+            <CardDescription>Manutenções planejadas/em progresso próximas do vencimento ou vencidas.</CardDescription>
           </CardHeader>
           <CardContent>
             {recentMaintenances.length > 0 ? (
@@ -126,19 +249,26 @@ export default function AdminDashboardPage() {
                 <ul className="space-y-3">
                   {recentMaintenances.map(maint => {
                     const vehicle = vehicles?.find(v => v.id === maint.vehicleId);
-                    const statusMap: Record<Maintenance['status'], string> = { planned: 'Planejada', in_progress: 'Em Progresso', completed: 'Concluída', cancelled: 'Cancelada'};
                     return (
-                      <li key={maint.id} className="text-sm p-2 border rounded-md hover:bg-secondary/30">
-                        <p className="font-medium">{maint.description}</p>
-                        <p className="text-xs text-muted-foreground">
+                      <li 
+                        key={maint.id} 
+                        className={`text-sm p-2 border rounded-md hover:bg-secondary/30 
+                                    ${maint.isOverdue ? 'border-red-400 dark:border-red-600' : 'border-border'}`}
+                      >
+                        <p className={`font-medium ${maint.isOverdue ? 'text-red-600 dark:text-red-400' : 'text-foreground'}`}>{maint.description}</p>
+                        <p className={`text-xs ${maint.isOverdue ? 'text-red-500 dark:text-red-400/90' : 'text-muted-foreground'}`}>
                           {vehicle?.plate} - Status: {statusMap[maint.status] || maint.status}
                         </p>
+                        <div className={`text-xs mt-0.5 ${maint.isOverdue ? 'text-red-500 dark:text-red-400/90' : 'text-muted-foreground'}`}>
+                          {maint.dateDetails && <span className={`block ${maint.isOverdueByDate ? 'font-semibold' : ''}`}>{maint.dateDetails}</span>}
+                          {maint.kmDetails && <span className={`block ${maint.isOverdueByKm ? 'font-semibold' : ''}`}>{maint.kmDetails}</span>}
+                        </div>
                       </li>
                     );
                   })}
                 </ul>
               </ScrollArea>
-            ) : <p className="text-sm text-muted-foreground">Nenhuma manutenção recente.</p>}
+            ) : <p className="text-sm text-muted-foreground">Nenhuma manutenção requerendo atenção imediata.</p>}
              <Button asChild variant="link" className="mt-2 px-0 -mb-2">
                 <Link href="/admin/maintenances">Ver Todas Manutenções</Link>
              </Button>

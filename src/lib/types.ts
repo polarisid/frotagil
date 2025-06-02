@@ -89,7 +89,7 @@ export interface VehicleUsageLog {
   returnedTimestamp?: string | null; // ISO string, null if still in use
   durationMinutes?: number; // Calculated on return
   status: 'active' | 'completed'; // 'active' if currently in use
-  initialMileage?: number; // KM at pickup
+  initialMileage: number; // KM at pickup, now mandatory
   finalMileage?: number;   // KM at return
   kmDriven?: number;       // Calculated: finalMileage - initialMileage
 }
@@ -121,3 +121,4 @@ export interface VehicleMileageReportItem {
   kmDrivenThisWeek: number;
   kmDrivenThisMonth: number;
 }
+

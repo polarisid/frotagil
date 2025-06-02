@@ -5,7 +5,7 @@ import { Container } from '@/components/shared/Container';
 import { PageTitle } from '@/components/shared/PageTitle';
 import { NewMaintenanceForm } from '@/components/admin/NewMaintenanceForm';
 import type { Vehicle } from '@/lib/types';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { getVehicles } from '@/lib/services/vehicleService';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,6 +15,10 @@ import { AlertTriangleIcon } from 'lucide-react';
 
 export default function NewMaintenancePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const defaultVehicleId = searchParams.get('vehicleId') || undefined;
+  const defaultDescription = searchParams.get('description') || undefined;
+  // const incidentId = searchParams.get('incidentId') || undefined; // Could be used for linking back or further logic
 
   const { data: vehicles, isLoading, error } = useQuery<Vehicle[], Error>({
     queryKey: ['vehicles'],
@@ -59,7 +63,10 @@ export default function NewMaintenancePage() {
       <NewMaintenanceForm
         vehicles={vehicles}
         onFormSubmitSuccess={handleFormSubmitSuccess}
+        defaultVehicleId={defaultVehicleId}
+        defaultDescription={defaultDescription}
       />
     </Container>
   );
 }
+

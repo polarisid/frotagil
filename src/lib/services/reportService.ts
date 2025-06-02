@@ -14,7 +14,8 @@ const calculateTotalKm = (logs: VehicleUsageLog[]): number => {
 };
 
 export async function getOperatorPerformanceReport(referenceDate: Date): Promise<OperatorPerformanceReportItem[]> {
-  const operators = (await getUsers()).filter(u => u.role === 'operator');
+  const allOperators = await getUsers();
+  const activeOperators = allOperators.filter(u => u.role === 'operator' && (u.status === 'active' || u.status === undefined)); // Consider undefined status as active for backward compatibility
   const reportItems: OperatorPerformanceReportItem[] = [];
 
   const sow = startOfWeek(referenceDate, { weekStartsOn: 1 });
@@ -23,15 +24,11 @@ export async function getOperatorPerformanceReport(referenceDate: Date): Promise
   const eom = endOfMonth(referenceDate);
 
   // Fetch all relevant data once to optimize Firestore reads
-  // Fetch logs for the entire month selected, then filter for the week in memory.
   const monthlyUsageLogs = await getUsageLogsForPeriod(som, eom, 'completed');
-  
-  // For incidents and checklists, the current requirement is total counts, not period-specific.
-  // If period-specific counts are needed in the future, these fetches would also need date filters.
   const allIncidents = await getIncidents(); 
   const allChecklists = await getChecklists(); 
 
-  for (const operator of operators) {
+  for (const operator of activeOperators) {
     const operatorMonthlyLogs = monthlyUsageLogs.filter(log => log.operatorId === operator.id);
     
     const operatorWeeklyLogs = operatorMonthlyLogs.filter(log => 
@@ -54,7 +51,8 @@ export async function getOperatorPerformanceReport(referenceDate: Date): Promise
 }
 
 export async function getVehicleMileageReport(referenceDate: Date): Promise<VehicleMileageReportItem[]> {
-  const vehicles = await getVehicles();
+  const allVehicles = await getVehicles();
+  const activeVehicles = allVehicles.filter(v => v.status === 'active');
   const reportItems: VehicleMileageReportItem[] = [];
 
   const sow = startOfWeek(referenceDate, { weekStartsOn: 1 });
@@ -64,7 +62,7 @@ export async function getVehicleMileageReport(referenceDate: Date): Promise<Vehi
   
   const monthlyUsageLogs = await getUsageLogsForPeriod(som, eom, 'completed');
 
-  for (const vehicle of vehicles) {
+  for (const vehicle of activeVehicles) {
     const vehicleMonthlyLogs = monthlyUsageLogs.filter(log => log.vehicleId === vehicle.id);
     
     const vehicleWeeklyLogs = vehicleMonthlyLogs.filter(log => 
@@ -82,3 +80,4 @@ export async function getVehicleMileageReport(referenceDate: Date): Promise<Vehi
   }
   return reportItems;
 }
+

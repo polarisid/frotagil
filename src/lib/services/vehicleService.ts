@@ -11,11 +11,10 @@ import {
   deleteDoc,
   query,
   where,
-  writeBatch,
   Timestamp
 } from 'firebase/firestore';
-import { createVehicleUsageLog, completeVehicleUsageLog } from './vehicleUsageLogService';
-import { getUserById } from './userService'; // To get operatorName
+import { completeVehicleUsageLog } from './vehicleUsageLogService'; // createVehicleUsageLog removed
+import { getUserById } from './userService';
 
 const vehiclesCollection = collection(db, 'vehicles');
 
@@ -58,7 +57,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id'>): Promise<Vehi
     ...vehicleData,
     plate: vehicleData.plate.toUpperCase(),
     acquisitionDate: vehicleData.acquisitionDate ? Timestamp.fromDate(new Date(vehicleData.acquisitionDate)) : null,
-    pickedUpDate: null,
+    pickedUpDate: null, // Initialize pickedUpDate as null
   };
 
   const docRef = await addDoc(vehiclesCollection, dataToSave);
@@ -76,11 +75,16 @@ export async function updateVehicle(id: string, vehicleData: Partial<Omit<Vehicl
   if (vehicleData.acquisitionDate && typeof vehicleData.acquisitionDate === 'string') {
     dataToUpdate.acquisitionDate = Timestamp.fromDate(new Date(vehicleData.acquisitionDate));
   }
-  if (vehicleData.pickedUpDate === null) {
-    dataToUpdate.pickedUpDate = null;
-  } else if (vehicleData.pickedUpDate && typeof vehicleData.pickedUpDate === 'string') {
-    dataToUpdate.pickedUpDate = Timestamp.fromDate(new Date(vehicleData.pickedUpDate));
+  
+  // Handle pickedUpDate: allow setting to null or a new Timestamp
+  if (vehicleData.hasOwnProperty('pickedUpDate')) {
+    if (vehicleData.pickedUpDate === null) {
+      dataToUpdate.pickedUpDate = null;
+    } else if (typeof vehicleData.pickedUpDate === 'string') {
+      dataToUpdate.pickedUpDate = Timestamp.fromDate(new Date(vehicleData.pickedUpDate));
+    }
   }
+
 
   await updateDoc(docRef, dataToUpdate);
 }
@@ -107,16 +111,11 @@ export async function pickUpVehicle(vehicleId: string, operatorId: string): Prom
   const operatorVehiclesSnap = await getDocs(operatorVehiclesQuery);
   if (!operatorVehiclesSnap.empty) throw new Error('Operador já possui um veículo atribuído.');
 
-  const operator = await getUserById(operatorId);
-  if (!operator) throw new Error('Operador não encontrado.');
-
+  // No longer creating VehicleUsageLog here. It will be created upon checklist submission.
   await updateDoc(vehicleRef, { 
     assignedOperatorId: operatorId,
     pickedUpDate: Timestamp.fromDate(new Date())
   });
-
-  // Create a new usage log, createVehicleUsageLog will fetch vehicle's current mileage
-  await createVehicleUsageLog(vehicleId, vehicleData.plate, operatorId, operator.name);
 }
 
 export async function returnVehicle(vehicleId: string, operatorId: string, newMileage: number): Promise<void> {
@@ -132,16 +131,15 @@ export async function returnVehicle(vehicleId: string, operatorId: string, newMi
     pickedUpDate: null
   };
 
-  // It's crucial that newMileage is a valid number here.
-  // The UpdateMileageDialog ensures this.
   if (typeof vehicleData.mileage === 'number' && newMileage < vehicleData.mileage) {
     throw new Error(`Nova quilometragem (${newMileage.toLocaleString('pt-BR')}) não pode ser menor que a anterior (${vehicleData.mileage.toLocaleString('pt-BR')}).`);
   }
   updates.mileage = newMileage;
   
-
   await updateDoc(vehicleRef, updates);
 
-  // Complete the active usage log, passing the final mileage
+  // Attempt to complete the active usage log.
+  // If no active log (e.g., checklist wasn't submitted), this will do nothing gracefully.
   await completeVehicleUsageLog(vehicleId, operatorId, newMileage);
 }
+

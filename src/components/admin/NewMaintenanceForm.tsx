@@ -32,7 +32,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '../ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { addMaintenance as addMaintenanceService } from '@/lib/services/maintenanceService';
 import { useAuth } from '@/hooks/useAuth';
@@ -45,12 +45,10 @@ const maintenanceFormSchema = z.object({
   scheduledDate: z.date().optional(),
   scheduledKm: z.preprocess(
     (val) => {
-      // console.log('[Zod Preprocess scheduledKm] Input val:', val);
       const strVal = String(val).trim();
       if (strVal === '' || strVal === 'null' || strVal === 'undefined') return undefined;
       const num = Number(strVal.replace(/\./g, '').replace(',', '.'));
-      // console.log('[Zod Preprocess scheduledKm] Converted num:', num);
-      return isNaN(num) ? undefined : num; // Retorna undefined se NaN para consistência
+      return isNaN(num) ? undefined : num; 
     },
     z.number({ invalid_type_error: "KM agendado deve ser um número ou estar vazio se não aplicável." })
       .min(0, "KM não pode ser negativo.")
@@ -68,7 +66,6 @@ const maintenanceFormSchema = z.object({
   ),
   observations: z.string().max(500, "Observações muito longas.").optional().default(''),
 }).superRefine((data, ctx) => {
-  // console.log('[Zod superRefine] Data:', data);
   if (data.scheduleBy === 'date' && !data.scheduledDate) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -93,9 +90,11 @@ type MaintenanceFormValues = z.infer<typeof maintenanceFormSchema>;
 interface NewMaintenanceFormProps {
   vehicles: Vehicle[];
   onFormSubmitSuccess: () => void;
+  defaultVehicleId?: string;
+  defaultDescription?: string;
 }
 
-export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMaintenanceFormProps) {
+export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess, defaultVehicleId, defaultDescription }: NewMaintenanceFormProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [scheduleBy, setScheduleBy] = useState<'date' | 'km' | undefined>(undefined);
@@ -104,9 +103,9 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
   const form = useForm<MaintenanceFormValues>({
     resolver: zodResolver(maintenanceFormSchema),
     defaultValues: {
-      vehicleId: undefined,
+      vehicleId: defaultVehicleId || undefined,
       type: 'corrective',
-      description: '',
+      description: defaultDescription || '',
       priority: 'medium',
       observations: '',
       scheduleBy: undefined,
@@ -115,6 +114,16 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
       scheduledDate: undefined,
     },
   });
+  
+  useEffect(() => {
+    if (defaultVehicleId) {
+      form.setValue('vehicleId', defaultVehicleId);
+    }
+    if (defaultDescription) {
+      form.setValue('description', defaultDescription);
+    }
+  }, [defaultVehicleId, defaultDescription, form]);
+
 
   const addMaintenanceMutation = useMutation({
     mutationFn: (data: Omit<Maintenance, 'id'| 'status' | 'completionDate'>) => addMaintenanceService(data),
@@ -124,8 +133,19 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
         description: `A manutenção para ${vehicles.find(v => v.id === data.vehicleId)?.plate} foi agendada.`,
       });
       queryClient.invalidateQueries({ queryKey: ['maintenances'] });
+      queryClient.invalidateQueries({ queryKey: ['incidents'] }); // Invalidate incidents in case a maintenance resolves one
       onFormSubmitSuccess();
-      form.reset();
+      form.reset({ // Reset with initial defaults, not necessarily all blank
+         vehicleId: undefined, // Clear vehicle unless it should persist for multiple adds
+         type: 'corrective',
+         description: '',
+         priority: 'medium',
+         observations: '',
+         scheduleBy: undefined,
+         cost: undefined,
+         scheduledKm: undefined,
+         scheduledDate: undefined,
+      });
       setScheduleBy(undefined);
     },
     onError: (error: Error) => {
@@ -139,10 +159,6 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
   });
 
   function onSubmit(values: MaintenanceFormValues) {
-    // console.log('[NewMaintenanceForm] onSubmit function called');
-    // console.log('[NewMaintenanceForm] Raw form values:', values);
-    // console.log('[NewMaintenanceForm] Current User for isAdmin check:', currentUser);
-
     if (!currentUser || currentUser.role !== 'admin') {
         toast({ variant: 'destructive', title: 'Não Autorizado', description: 'Apenas administradores podem agendar manutenções.' });
         return;
@@ -159,15 +175,12 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
       scheduledDate: values.scheduleBy === 'date' && values.scheduledDate ? format(values.scheduledDate, 'yyyy-MM-dd') : undefined,
     };
     
-    // Explicitly remove undefined fields to prevent Firestore errors
     Object.keys(maintenanceDataToSubmit).forEach(key => {
       if (maintenanceDataToSubmit[key as keyof typeof maintenanceDataToSubmit] === undefined) {
         delete maintenanceDataToSubmit[key as keyof typeof maintenanceDataToSubmit];
       }
     });
     
-    // console.log('[NewMaintenanceForm] Data to submit to service:', maintenanceDataToSubmit);
-    // console.log('[NewMaintenanceForm] Attempting to call addMaintenanceMutation.mutate with:', maintenanceDataToSubmit);
     addMaintenanceMutation.mutate(maintenanceDataToSubmit);
   }
 
@@ -175,7 +188,19 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
     console.error('[NewMaintenanceForm] Validation Errors:', errors);
   };
 
-  const activeVehicles = vehicles.filter(v => v.status === 'active');
+  // Filter out vehicles that are not active OR if a defaultVehicleId is provided, only show that one (and ensure it's in the list)
+  const vehicleOptions = defaultVehicleId 
+    ? vehicles.filter(v => v.id === defaultVehicleId) 
+    : vehicles.filter(v => v.status === 'active' || v.status === 'maintenance'); // Allow scheduling for vehicles in maintenance too
+  
+  if (defaultVehicleId && !vehicleOptions.find(v => v.id === defaultVehicleId)) {
+    // If the defaultVehicleId is for a vehicle not in the general list (e.g. inactive), add it to the options
+    const defaultVehicle = vehicles.find(v => v.id === defaultVehicleId);
+    if (defaultVehicle) {
+      vehicleOptions.unshift(defaultVehicle); // Add to the beginning
+    }
+  }
+
 
   return (
     <Card className="max-w-2xl mx-auto shadow-lg">
@@ -194,14 +219,18 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
                     render={({ field }) => (
                         <FormItem>
                         <FormLabel>Veículo</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
+                        <Select 
+                          onValueChange={field.onChange} 
+                          value={field.value}
+                          disabled={!!defaultVehicleId && vehicleOptions.length === 1} // Disable if pre-selected from incident
+                        >
                             <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger className={!!defaultVehicleId && vehicleOptions.length === 1 ? "bg-muted/50" : ""}>
                                 <SelectValue placeholder="Selecione o veículo" />
                             </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                            {activeVehicles.map(v => (
+                            {vehicleOptions.map(v => (
                                 <SelectItem key={v.id} value={v.id}>
                                 {v.plate} - {v.make} {v.model} ({v.status === 'active' ? 'Ativo' : v.status === 'maintenance' ? 'Em Manutenção' : 'Inativo'})
                                 </SelectItem>
@@ -403,7 +432,6 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
                         type="submit" 
                         className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
                         disabled={addMaintenanceMutation.isPending || form.formState.isSubmitting}
-                        // onClick={() => console.log('[NewMaintenanceForm] Botão "Agendar Manutenção" CLICADO!')}
                     >
                         {addMaintenanceMutation.isPending || form.formState.isSubmitting ? 'Agendando...' : <><SaveIcon className="mr-2 h-4 w-4" /> Agendar Manutenção</>}
                     </Button>
@@ -415,4 +443,3 @@ export function NewMaintenanceForm({ vehicles, onFormSubmitSuccess }: NewMainten
   );
 }
 
-    

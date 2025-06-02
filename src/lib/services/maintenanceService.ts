@@ -1,4 +1,6 @@
 
+'use server';
+
 import { db } from '@/lib/firebase';
 import type { Maintenance } from '@/lib/types';
 import {
@@ -18,29 +20,20 @@ import {
 const maintenancesCollection = collection(db, 'maintenances');
 
 export async function getMaintenances(filters?: { vehicleId?: string; status?: string }): Promise<Maintenance[]> {
-  // Start with a base query without default ordering that might hide items
   let q = query(maintenancesCollection); 
   
-  // Apply filters
   if (filters?.vehicleId) {
     q = query(q, where('vehicleId', '==', filters.vehicleId));
   }
   if (filters?.status) {
     q = query(q, where('status', '==', filters.status));
   }
+  // Adicionando ordenação para consistência, pode ser ajustado conforme necessário
+  q = query(q, orderBy('scheduledDate', 'desc'), orderBy('description', 'asc'));
 
-  // If a specific date-related sort is needed later, it can be added conditionally
-  // For now, not ordering by scheduledDate by default to ensure all items appear.
-  // If an order is strictly necessary, consider a field that always exists or a more complex ordering strategy.
-  // For example, if you wanted to keep previous behavior but ensure items without scheduledDate are at the end:
-  // q = query(q, orderBy('scheduledDate', 'desc')); // This was the original line, re-evaluate if needed.
-  // One might need to query twice or sort client-side if Firestore's null handling in orderBy is problematic.
-
-  // A common practice if a default order is needed is to order by a timestamp of creation if available,
-  // or another consistently present field. For now, let's rely on Firestore's natural order or filtered order.
 
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(docSnap => { // Renamed doc to docSnap to avoid conflict
+  return snapshot.docs.map(docSnap => {
     const data = docSnap.data();
     return { 
       id: docSnap.id, 
@@ -66,57 +59,86 @@ export async function getMaintenanceById(id: string): Promise<Maintenance | null
   return null;
 }
 
-export async function addMaintenance(maintenanceData: Omit<Maintenance, 'id' | 'status' | 'completionDate'>): Promise<Maintenance> {
-  const { cost, scheduledKm, scheduledDate, attachments, ...restOfData } = maintenanceData;
+export async function addMaintenance(maintenanceData: Omit<Maintenance, 'id'>): Promise<Maintenance> {
+  const {
+    vehicleId,
+    type,
+    description,
+    priority,
+    status: inputStatus,
+    scheduledDate: inputScheduledDate,
+    scheduledKm: inputScheduledKm,
+    completionDate: inputCompletionDate,
+    cost: inputCost,
+    observations: inputObservations,
+    attachments: inputAttachments,
+  } = maintenanceData;
 
   const dataToSave: any = {
-    ...restOfData,
-    status: 'planned', // Default status for new maintenance
+    vehicleId,
+    type,
+    description,
+    priority,
+    observations: inputObservations || null,
+    status: inputStatus || 'planned',
+    attachments: inputAttachments || null,
   };
 
-  if (cost !== undefined) {
-    dataToSave.cost = Number(cost); // Ensure it's a number
-  }
-  if (scheduledKm !== undefined) {
-    dataToSave.scheduledKm = Number(scheduledKm); // Ensure it's a number
-  } else {
-    // Ensure scheduledKm is explicitly null or not set if not provided
-    dataToSave.scheduledKm = null; 
-  }
+  dataToSave.cost = (inputCost !== undefined && inputCost !== null && String(inputCost).trim() !== '') ? Number(inputCost) : null;
+  dataToSave.scheduledKm = (inputScheduledKm !== undefined && inputScheduledKm !== null && String(inputScheduledKm).trim() !== '') ? Number(inputScheduledKm) : null;
 
-  if (scheduledDate) { // This is 'yyyy-MM-dd' string or undefined from the form
-    const dateParts = scheduledDate.split('-').map(part => parseInt(part, 10));
-    if (dateParts.length === 3 && !isNaN(dateParts[0]) && !isNaN(dateParts[1]) && !isNaN(dateParts[2])) {
-        dataToSave.scheduledDate = Timestamp.fromDate(new Date(dateParts[0], dateParts[1] - 1, dateParts[2]));
+  const parseAndSetDate = (dateInput: string | Date | undefined | null, fieldName: string) => {
+    if (dateInput) {
+      let dateObj;
+      if (typeof dateInput === 'string') {
+        // Handles YYYY-MM-DD format
+        const dateParts = dateInput.split('-').map(part => parseInt(part, 10));
+        if (dateParts.length === 3 && !isNaN(dateParts[0]) && !isNaN(dateParts[1]) && !isNaN(dateParts[2])) {
+          // Use UTC to represent the date at midnight, avoiding timezone shifts for date-only fields
+          dateObj = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]));
+        }
+      } else if (dateInput instanceof Date) {
+        dateObj = dateInput;
+      }
+
+      if (dateObj && !isNaN(dateObj.getTime())) {
+        dataToSave[fieldName] = Timestamp.fromDate(dateObj);
+      } else {
+        console.warn(`Invalid ${fieldName} format provided:`, dateInput, "- setting to null.");
+        dataToSave[fieldName] = null;
+      }
     } else {
-        console.warn("Invalid scheduledDate format received:", scheduledDate);
-        dataToSave.scheduledDate = null; // Set to null if invalid
+      dataToSave[fieldName] = null;
     }
-  } else {
-    dataToSave.scheduledDate = null; // Ensure scheduledDate is explicitly null if not provided
-  }
+  };
 
-  if (attachments !== undefined) { 
-    dataToSave.attachments = attachments;
+  parseAndSetDate(inputScheduledDate, 'scheduledDate');
+
+  if (dataToSave.status === 'completed') {
+    parseAndSetDate(inputCompletionDate, 'completionDate');
+    // If status is 'completed' but completionDate ends up null (e.g., not provided from Excel or invalid)
+    // this might be something to flag or handle based on business rules. For now, it will be null.
+  } else {
+    dataToSave.completionDate = null; // Ensure completionDate is null if status is not 'completed'
   }
   
   const docRef = await addDoc(maintenancesCollection, dataToSave);
-  
-  const savedDoc = await getDoc(docRef);
-  const savedData = savedDoc.data();
+  const savedDocSnap = await getDoc(docRef); // Renamed to avoid conflict
+  const savedData = savedDocSnap.data()!;
 
   return {
     id: docRef.id,
-    vehicleId: maintenanceData.vehicleId,
-    type: maintenanceData.type,
-    description: maintenanceData.description,
-    priority: maintenanceData.priority,
-    status: 'planned',
-    observations: maintenanceData.observations,
-    cost: savedData?.cost, 
-    scheduledKm: savedData?.scheduledKm, 
-    scheduledDate: savedData?.scheduledDate instanceof Timestamp ? savedData.scheduledDate.toDate().toISOString().split('T')[0] : undefined,
-    attachments: savedData?.attachments,
+    vehicleId: savedData.vehicleId,
+    type: savedData.type,
+    description: savedData.description,
+    priority: savedData.priority,
+    status: savedData.status,
+    observations: savedData.observations,
+    cost: savedData.cost,
+    scheduledKm: savedData.scheduledKm,
+    scheduledDate: savedData.scheduledDate instanceof Timestamp ? savedData.scheduledDate.toDate().toISOString().split('T')[0] : undefined,
+    completionDate: savedData.completionDate instanceof Timestamp ? savedData.completionDate.toDate().toISOString().split('T')[0] : undefined,
+    attachments: savedData.attachments,
   } as Maintenance;
 }
 
@@ -125,48 +147,67 @@ export async function updateMaintenance(id: string, maintenanceData: Partial<Omi
   const docRef = doc(db, 'maintenances', id);
   const dataToUpdate: any = { ...maintenanceData }; 
 
-  if (maintenanceData.scheduledDate && typeof maintenanceData.scheduledDate === 'string') {
-    const dateParts = maintenanceData.scheduledDate.split('-').map(part => parseInt(part, 10));
-     if (dateParts.length === 3 && !isNaN(dateParts[0]) && !isNaN(dateParts[1]) && !isNaN(dateParts[2])) {
-        dataToUpdate.scheduledDate = Timestamp.fromDate(new Date(dateParts[0], dateParts[1] - 1, dateParts[2]));
-    } else {
-        console.warn("Invalid scheduledDate format for update:", maintenanceData.scheduledDate);
-        delete dataToUpdate.scheduledDate; 
+  const parseAndPrepareDateForUpdate = (dateInput: string | Date | undefined | null, fieldName: string) => {
+    if (dateInput === undefined && !maintenanceData.hasOwnProperty(fieldName)) {
+      // Field not in update payload, do nothing
+      return;
     }
-  } else if (maintenanceData.hasOwnProperty('scheduledDate') && maintenanceData.scheduledDate === undefined) {
-    // If explicitly set to undefined (e.g. when scheduleBy changes), store as null
-    dataToUpdate.scheduledDate = null;
-  }
+    if (dateInput === null || dateInput === '') {
+      dataToUpdate[fieldName] = null;
+    } else if (dateInput) {
+      let dateObj;
+      if (typeof dateInput === 'string') {
+        const dateParts = dateInput.split('-').map(part => parseInt(part, 10));
+        if (dateParts.length === 3 && !isNaN(dateParts[0]) && !isNaN(dateParts[1]) && !isNaN(dateParts[2])) {
+           dateObj = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]));
+        }
+      } else if (dateInput instanceof Date) {
+        dateObj = dateInput;
+      }
 
-
-  if (maintenanceData.completionDate && typeof maintenanceData.completionDate === 'string') {
-    const dateParts = maintenanceData.completionDate.split('-').map(part => parseInt(part, 10));
-     if (dateParts.length === 3 && !isNaN(dateParts[0]) && !isNaN(dateParts[1]) && !isNaN(dateParts[2])) {
-        dataToUpdate.completionDate = Timestamp.fromDate(new Date(dateParts[0], dateParts[1] - 1, dateParts[2]));
+      if (dateObj && !isNaN(dateObj.getTime())) {
+        dataToUpdate[fieldName] = Timestamp.fromDate(dateObj);
+      } else {
+        console.warn(`Invalid ${fieldName} format for update:`, dateInput, "- setting to null.");
+        dataToUpdate[fieldName] = null;
+      }
     } else {
-        console.warn("Invalid completionDate format for update:", maintenanceData.completionDate);
-        delete dataToUpdate.completionDate; 
+      dataToUpdate[fieldName] = null;
     }
-  } else if (maintenanceData.hasOwnProperty('completionDate') && maintenanceData.completionDate === undefined) {
-    dataToUpdate.completionDate = null;
-  }
+  };
+  
+  parseAndPrepareDateForUpdate(maintenanceData.scheduledDate, 'scheduledDate');
+  parseAndPrepareDateForUpdate(maintenanceData.completionDate, 'completionDate');
 
-  if (dataToUpdate.hasOwnProperty('cost') && dataToUpdate.cost !== undefined) {
-     dataToUpdate.cost = Number(dataToUpdate.cost);
-  } else if (dataToUpdate.hasOwnProperty('cost') && dataToUpdate.cost === undefined) {
-    dataToUpdate.cost = null;
-  }
 
-  if (dataToUpdate.hasOwnProperty('scheduledKm') && dataToUpdate.scheduledKm !== undefined) {
-    dataToUpdate.scheduledKm = Number(dataToUpdate.scheduledKm);
-  } else if (dataToUpdate.hasOwnProperty('scheduledKm') && dataToUpdate.scheduledKm === undefined) {
-     dataToUpdate.scheduledKm = null;
+  if (maintenanceData.hasOwnProperty('cost')) {
+     dataToUpdate.cost = (maintenanceData.cost !== undefined && maintenanceData.cost !== null && String(maintenanceData.cost).trim() !== '') ? Number(maintenanceData.cost) : null;
+  }
+  if (maintenanceData.hasOwnProperty('scheduledKm')) {
+    dataToUpdate.scheduledKm = (maintenanceData.scheduledKm !== undefined && maintenanceData.scheduledKm !== null && String(maintenanceData.scheduledKm).trim() !== '') ? Number(maintenanceData.scheduledKm) : null;
   }
   
+  // Ensure completionDate is null if status is being updated to something other than 'completed'
+  if (maintenanceData.hasOwnProperty('status') && maintenanceData.status !== 'completed') {
+    dataToUpdate.completionDate = null;
+  }
+  // If status is being updated to 'completed' and no completionDate is provided, it might be set to null or a default.
+  // The current EditMaintenanceForm sets today's date if status becomes 'completed' and completionDate is empty.
+
+  // Remove undefined fields that were not explicitly set to null
   Object.keys(dataToUpdate).forEach(key => {
     if (dataToUpdate[key] === undefined && !maintenanceData.hasOwnProperty(key)) {
-      // Avoid deleting fields not explicitly passed in maintenanceData unless they were set to undefined
       delete dataToUpdate[key];
+    } else if (dataToUpdate[key] === undefined && maintenanceData.hasOwnProperty(key) && maintenanceData[key as keyof typeof maintenanceData] === undefined){
+        // If a field was explicitly passed as undefined in maintenanceData (e.g. from form logic that clears a field)
+        // ensure it becomes null for Firestore.
+        if(key === 'cost' || key === 'scheduledKm' || key === 'scheduledDate' || key === 'completionDate' || key === 'observations' || key === 'attachments'){
+            dataToUpdate[key] = null;
+        } else {
+             // For other fields, undefined might mean "don't change" or could be an error.
+             // For safety, if not a nullable field handled above, remove it to avoid Firestore error.
+             delete dataToUpdate[key];
+        }
     }
   });
 
@@ -176,3 +217,4 @@ export async function updateMaintenance(id: string, maintenanceData: Partial<Omi
 export async function deleteMaintenance(id: string): Promise<void> {
   await deleteDoc(doc(db, 'maintenances', id));
 }
+

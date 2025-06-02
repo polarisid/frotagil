@@ -1,6 +1,6 @@
 
 import { db } from '@/lib/firebase';
-import type { Checklist } from '@/lib/types';
+import type { Checklist, Vehicle } from '@/lib/types';
 import {
   collection,
   doc,
@@ -15,6 +15,8 @@ import {
   Timestamp,
   limit
 } from 'firebase/firestore';
+import { createVehicleUsageLog, getActiveUsageLogForVehicleAndOperator } from './vehicleUsageLogService';
+import { updateVehicle as updateVehicleService, getVehicleById } from './vehicleService'; // Renamed to avoid conflict
 
 const checklistsCollection = collection(db, 'checklists');
 
@@ -64,6 +66,38 @@ export async function addChecklist(checklistData: Omit<Checklist, 'id' | 'date'>
     date: Timestamp.fromDate(checklistData.date),
   };
   const docRef = await addDoc(checklistsCollection, dataToSave);
+
+  // Update vehicle mileage
+  if (checklistData.mileage !== undefined) {
+    await updateVehicleService(checklistData.vehicleId, { mileage: checklistData.mileage });
+  }
+
+  // Check if this is the first checklist for the current vehicle possession
+  // and create VehicleUsageLog if needed.
+  const vehicle = await getVehicleById(checklistData.vehicleId);
+  if (vehicle && vehicle.pickedUpDate && vehicle.assignedOperatorId === checklistData.operatorId) {
+    const checklistTimestamp = Timestamp.fromDate(checklistData.date);
+    const pickedUpTimestamp = Timestamp.fromDate(new Date(vehicle.pickedUpDate));
+
+    if (checklistTimestamp >= pickedUpTimestamp) {
+      const existingActiveLog = await getActiveUsageLogForVehicleAndOperator(checklistData.vehicleId, checklistData.operatorId);
+      if (!existingActiveLog) {
+        if (checklistData.mileage === undefined) {
+          console.warn(`Cannot create VehicleUsageLog for checklist ${docRef.id} because checklist mileage is undefined.`);
+        } else {
+          await createVehicleUsageLog(
+            checklistData.vehicleId,
+            vehicle.plate, // Assuming vehicle object has plate
+            checklistData.operatorId,
+            checklistData.operatorName,
+            checklistData.mileage // This is the initial mileage for the usage log
+          );
+        }
+      }
+    }
+  }
+
+
   return {
     id: docRef.id,
     ...checklistData,
@@ -96,12 +130,12 @@ export async function getChecklistsForOperator(
     q = query(q, where('vehicleId', '==', filters.vehicleId));
   }
   if (filters?.date) {
-    const startDate = Timestamp.fromDate(new Date(filters.date + "T00:00:00Z")); // Use Z for UTC context if dates are stored in UTC
+    const startDate = Timestamp.fromDate(new Date(filters.date + "T00:00:00Z"));
     const endDate = Timestamp.fromDate(new Date(filters.date + "T23:59:59Z"));
     q = query(q, where('date', '>=', startDate), where('date', '<=', endDate));
   }
   
-  q = query(q, orderBy('date', 'desc')); // Apply ordering after all filters
+  q = query(q, orderBy('date', 'desc'));
 
   const snapshot = await getDocs(q);
   return snapshot.docs.map(doc => {
@@ -142,10 +176,8 @@ export async function getTodayChecklistForVehicle(vehicleId: string, operatorId:
 export async function getChecklistForCurrentPossession(
   vehicleId: string,
   operatorId: string,
-  pickedUpDateISO: string // Data de quando o veículo foi pego, em formato ISO string
+  pickedUpDateISO: string 
 ): Promise<Checklist | null> {
-  // Se não há data de retirada válida, não há posse atual para verificar.
-  // Isso também previne erros se pickedUpDateISO for null ou undefined.
   if (!pickedUpDateISO || typeof pickedUpDateISO !== 'string') {
       console.warn('getChecklistForCurrentPossession: pickedUpDateISO é inválida ou não fornecida.');
       return null;
@@ -156,15 +188,14 @@ export async function getChecklistForCurrentPossession(
     pickedUpTimestamp = Timestamp.fromDate(new Date(pickedUpDateISO));
   } catch (error) {
     console.error('getChecklistForCurrentPossession: Erro ao converter pickedUpDateISO para Timestamp:', error);
-    return null; // Retorna null se a data for inválida
+    return null;
   }
-
 
   const q = query(
     checklistsCollection,
     where('vehicleId', '==', vehicleId),
     where('operatorId', '==', operatorId),
-    where('date', '>=', pickedUpTimestamp), // Checklist feito DEPOIS ou NO MOMENTO da retirada
+    where('date', '>=', pickedUpTimestamp), 
     orderBy('date', 'desc'),
     limit(1)
   );
@@ -182,8 +213,6 @@ export async function getChecklistForCurrentPossession(
     } as Checklist;
   } catch (error) {
     console.error("Erro ao buscar checklist para posse atual:", error);
-    // Dependendo da política de erro, você pode querer relançar o erro ou retornar null
-    // Se for um erro de índice ausente, o Firebase geralmente lança um erro específico.
     if ((error as any)?.code === 'failed-precondition') {
         console.warn("Firestore query failed, likely due to a missing composite index. Please check Firebase console for index creation link.");
     }
@@ -217,7 +246,7 @@ export async function getWeeklyChecklistsByOperator(
     return checklistsByOperator;
   } catch (error) {
     console.error("Erro ao buscar checklists semanais por operador:", error);
-    throw error; // Rejeita o erro para ser tratado no componente que chama
+    throw error; 
   }
 }
 

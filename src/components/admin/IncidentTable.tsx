@@ -24,7 +24,7 @@ import { format } from 'date-fns';
 interface IncidentTableProps {
   incidents: Incident[];
   vehicles: Vehicle[];
-  users: User[]; 
+  users: User[];
 }
 
 export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps) {
@@ -77,7 +77,7 @@ export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps
       duration: 10000,
     });
   };
-  
+
 
   return (
     <div className="overflow-hidden rounded-lg border shadow-md">
@@ -103,6 +103,7 @@ export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps
           {incidents.map((incident) => {
             const currentStatus = statusConfig[incident.status] || { label: incident.status, icon: ShieldXIcon, className: 'bg-gray-100 text-gray-700 border-gray-500' };
             const Icon = currentStatus.icon;
+            const maintenanceDescription = `Manutenção corretiva referente à ocorrência: ${incident.description.substring(0, 100)}${incident.description.length > 100 ? "..." : ""}`;
             return (
               <TableRow key={incident.id} className="hover:bg-muted/50">
                 <TableCell>
@@ -134,7 +135,7 @@ export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps
                       </DropdownMenuItem>
                       { (incident.status === 'reported' || incident.status === 'under_analysis' || incident.status === 'pending_action') &&
                         <DropdownMenuItem asChild>
-                          <Link href={`/admin/maintenances/new?incidentId=${incident.id}&vehicleId=${incident.vehicleId}&description=${encodeURIComponent('Manutenção corretiva referente a ocorrência: ' + incident.description.substring(0,50) + "...")}`}>
+                          <Link href={`/admin/maintenances/new?incidentId=${incident.id}&vehicleId=${incident.vehicleId}&description=${encodeURIComponent(maintenanceDescription)}`}>
                             <WrenchIcon className="mr-2 h-4 w-4" /> Criar Manutenção
                           </Link>
                         </DropdownMenuItem>
@@ -160,3 +161,4 @@ export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps
     </div>
   );
 }
+
