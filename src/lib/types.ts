@@ -103,3 +103,21 @@ export interface ChecklistItemDefinition {
   isActive: boolean;   // To allow soft-deleting or disabling items
 }
 
+// Types for Admin Reports
+export interface OperatorPerformanceReportItem {
+  operatorId: string;
+  operatorName: string;
+  kmDrivenThisWeek: number;
+  kmDrivenThisMonth: number;
+  totalIncidentsReported: number;
+  totalChecklistsSubmitted: number;
+}
+
+export interface VehicleMileageReportItem {
+  vehicleId: string;
+  plate: string;
+  make: string;
+  model: string;
+  kmDrivenThisWeek: number;
+  kmDrivenThisMonth: number;
+}

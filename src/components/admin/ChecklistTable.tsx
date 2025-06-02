@@ -17,10 +17,10 @@ import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import jsPDF from 'jspdf';
-import { format } from 'date-fns';
+import { format as formatDateFn } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-// Mantendo a definição completa aqui para consistência na exportação do PDF pelo admin
+
 const fullChecklistItemsDefinition: { id: string; label: string }[] = [
   { id: "tires", label: "Pneus calibrados e em bom estado?" },
   { id: "lights", label: "Luzes (faróis, lanternas, setas, freio) funcionando?" },
@@ -42,57 +42,164 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
   const handleExportPdf = (checklist: Checklist) => {
     const vehicle = vehicles.find(v => v.id === checklist.vehicleId);
     const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const leftMargin = 15;
+    const rightMargin = 15;
+    const topMargin = 15; // Ajustado para dar espaço ao logo
+    const bottomMargin = 20;
+    const contentWidth = pageWidth - leftMargin - rightMargin;
+    let yPos = topMargin;
+    const lineHeight = 5; 
+    const cellPadding = 2;
+
+    // Desenhar Logo
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
+    yPos += 10; // Espaço após o logo
 
     doc.setFontSize(18);
-    doc.text('Relatório de Checklist de Veículo', 105, 20, { align: 'center' });
-    
-    doc.setFontSize(12);
-    doc.text(`Data: ${format(new Date(checklist.date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 14, 35);
-    doc.text(`Operador: ${checklist.operatorName}`, 14, 42);
-    doc.text(`Veículo: ${vehicle ? `${vehicle.make} ${vehicle.model} (${vehicle.plate})` : 'Veículo Desconhecido'}`, 14, 49);
+    doc.setFont(undefined, 'bold');
+    doc.text('Relatório de Checklist de Veículo', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 15;
+
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Veículo: ${vehicle ? `${vehicle.make} ${vehicle.model} (${vehicle.plate})` : 'Veículo Desconhecido'}`, leftMargin, yPos);
+    yPos += 7;
+    doc.text(`Operador: ${checklist.operatorName}`, leftMargin, yPos);
+    yPos += 7;
+    doc.text(`Data: ${formatDateFn(new Date(checklist.date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, leftMargin, yPos);
+    yPos += 7;
     if (checklist.mileage !== undefined) {
-      doc.text(`KM Registrado: ${checklist.mileage.toLocaleString('pt-BR')} km`, 14, 56);
+      doc.text(`KM Registrado: ${checklist.mileage.toLocaleString('pt-BR')} km`, leftMargin, yPos);
     }
+    yPos += 12;
+
 
     doc.setFontSize(14);
-    doc.text('Itens Verificados:', 14, 70);
-    let yPos = 78;
+    doc.setFont(undefined, 'bold');
+    doc.text('Itens Verificados:', leftMargin, yPos);
+    yPos += 8;
+
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    const itemColWidth = contentWidth * 0.80; 
+    const statusColWidth = contentWidth * 0.20;
+    const itemColX = leftMargin;
+    const statusColX = leftMargin + itemColWidth;
+
+    doc.text('Item', itemColX + cellPadding, yPos);
+    doc.text('Status', statusColX + cellPadding, yPos);
+    yPos += 5; 
+    doc.setLineWidth(0.3); 
+    doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos); 
+    yPos += 3; 
+    doc.setFont(undefined, 'normal');
+
 
     const itemsToDisplay = fullChecklistItemsDefinition.map(defItem => {
         const submittedItem = checklist.items.find(ci => ci.id === defItem.id);
         return {
             label: defItem.label,
-            value: submittedItem ? submittedItem.value : null // Default to N/A if not found
+            value: submittedItem ? submittedItem.value : null 
         };
     });
 
-    itemsToDisplay.forEach(item => {
-      doc.setFontSize(10);
-      const statusText = item.value === true ? 'Sim' : item.value === false ? 'Não' : 'N/A';
-      doc.text(`${item.label}: ${statusText}`, 20, yPos);
-      yPos += 7;
-      if (yPos > 280) { // Basic page break handling
+    const drawItemRowPdf = (itemLabel: string, itemValue: boolean | null) => {
+      const itemLabelLines = doc.splitTextToSize(itemLabel, itemColWidth - (cellPadding * 2));
+      const rowHeight = (itemLabelLines.length * lineHeight) + (cellPadding * 2);
+
+      if (yPos + rowHeight + 3 > pageHeight - bottomMargin) { 
         doc.addPage();
-        yPos = 20;
+        yPos = topMargin;
+        // Redesenhar logo e cabeçalho da página
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'bold');
+        doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
+        yPos += 10;
+
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'bold');
+        doc.text('Item', itemColX + cellPadding, yPos);
+        doc.text('Status', statusColX + cellPadding, yPos);
+        yPos += 5;
+        doc.setLineWidth(0.3);
+        doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos);
+        yPos += 3; 
+        doc.setFont(undefined, 'normal');
       }
+      
+      const textY = yPos + cellPadding + (lineHeight * 0.7); 
+
+      doc.text(itemLabelLines, itemColX + cellPadding, textY);
+
+      let statusTextWithIcon = '- N/A'; 
+      doc.setFont(undefined, 'bold');
+      if (itemValue === true) {
+        doc.setTextColor(0, 100, 0); // Dark Green
+        statusTextWithIcon = "✓ Sim";
+      } else if (itemValue === false) {
+        doc.setTextColor(200, 0, 0); // Dark Red
+        statusTextWithIcon = "✗ Não";
+      } else {
+        doc.setTextColor(105, 105, 105); // Dark Grey
+      }
+      
+      doc.text(statusTextWithIcon, statusColX + cellPadding, textY);
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(0, 0, 0); // Reset color to black
+
+      yPos += rowHeight;
+      doc.setLineWidth(0.1); 
+      doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos); 
+      yPos += 3; 
+    };
+
+
+    itemsToDisplay.forEach(item => {
+      drawItemRowPdf(item.label, item.value);
     });
+    
+    yPos += 5; 
 
     if (checklist.observations) {
+      const obsTitleHeight = 7;
+      const obsTextHeight = doc.splitTextToSize(checklist.observations, contentWidth).length * lineHeight;
+      if (yPos + obsTitleHeight + obsTextHeight + 5 > pageHeight - bottomMargin) { 
+          doc.addPage(); yPos = topMargin; 
+          doc.setFontSize(10); doc.setFont(undefined, 'bold');
+          doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
+          yPos += 10;
+      }
       doc.setFontSize(12);
-      doc.text('Observações:', 14, yPos + 5);
+      doc.setFont(undefined, 'bold');
+      doc.text('Observações:', leftMargin, yPos);
+      yPos += obsTitleHeight;
       doc.setFontSize(10);
-      const splitObservations = doc.splitTextToSize(checklist.observations, 170); // Max width 170mm
-      doc.text(splitObservations, 20, yPos + 12);
-      yPos += (splitObservations.length * 5) + 12;
-       if (yPos > 280) { doc.addPage(); yPos = 20; }
+      doc.setFont(undefined, 'normal');
+      const splitObservations = doc.splitTextToSize(checklist.observations, contentWidth); 
+      doc.text(splitObservations, leftMargin, yPos);
+      yPos += obsTextHeight + 5;
     }
-    
+
+    const sigTitleHeight = 7;
+    const sigTextHeight = lineHeight;
+    if (yPos + sigTitleHeight + sigTextHeight + 5 > pageHeight - bottomMargin) { 
+        doc.addPage(); yPos = topMargin; 
+        doc.setFontSize(10); doc.setFont(undefined, 'bold');
+        doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
+        yPos += 10;
+    }
     doc.setFontSize(12);
-    doc.text('Assinatura (Digital):', 14, yPos + 10);
+    doc.setFont(undefined, 'bold');
+    doc.text('Assinatura (Digital):', leftMargin, yPos);
+    yPos += sigTitleHeight;
     doc.setFontSize(10);
-    doc.setFont("courier", "normal"); // Monospaced font for signature
-    doc.text(checklist.signature, 20, yPos + 17);
-    
+    doc.setFont("courier", "normal"); 
+    doc.text(checklist.signature, leftMargin, yPos);
+
     doc.save(`checklist-${checklist.id.substring(0,8)}-${vehicle?.plate || 'desconhecido'}.pdf`);
 
     toast({ title: 'Exportar Checklist PDF', description: `Checklist ${checklist.id.substring(0,8)} exportado para PDF.`});
@@ -104,7 +211,7 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
   };
 
   const hasIssues = (checklist: Checklist) => {
-    return checklist.items.some(item => item.value === false); // Nok (Não) é um problema
+    return checklist.items.some(item => item.value === false);
   };
 
   const getViewLink = (checklist: Checklist) => {
@@ -139,7 +246,7 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
           {checklists.map((checklist) => (
             <TableRow key={checklist.id} className="hover:bg-muted/50">
               <TableCell>
-                {format(new Date(checklist.date), "dd/MM/yy HH:mm", { locale: ptBR })}
+                {formatDateFn(new Date(checklist.date), "dd/MM/yy HH:mm", { locale: ptBR })}
               </TableCell>
               <TableCell>{checklist.operatorName}</TableCell>
               <TableCell>{getVehicleInfo(checklist.vehicleId)}</TableCell>
@@ -182,3 +289,4 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
     </div>
   );
 }
+

@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { ListChecksIcon, CalendarDaysIcon, TruckIcon, LogInIcon, LogOutIcon, ClipboardListIcon, HistoryIcon, MessageSquareWarningIcon, AlertTriangleIcon, WrenchIcon, Undo2Icon, ActivityIcon, RouteIcon, CalendarRangeIcon, FileTextIcon } from 'lucide-react';
+import { ListChecksIcon, CalendarDaysIcon, TruckIcon, LogInIcon, LogOutIcon, ClipboardListIcon, HistoryIcon, MessageSquareWarningIcon, AlertTriangleIcon, WrenchIcon, Undo2Icon, ActivityIcon, RouteIcon, CalendarRangeIcon, FileTextIcon, CalendarIcon as FilterCalendarIcon } from 'lucide-react';
 import { ReportIncidentDialog } from '@/components/operator/ReportIncidentDialog';
 import { useAuth } from '@/hooks/useAuth';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -20,7 +20,7 @@ import { getVehicles, pickUpVehicle, returnVehicle } from '@/lib/services/vehicl
 import { getIncidents } from '@/lib/services/incidentService';
 import { getMaintenances } from '@/lib/services/maintenanceService';
 import { getChecklistsForOperator, getChecklistForCurrentPossession } from '@/lib/services/checklistService';
-import { getVehicleUsageLogs } from '@/lib/services/vehicleUsageLogService'; // Import service
+import { getVehicleUsageLogs } from '@/lib/services/vehicleUsageLogService'; 
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   AlertDialog,
@@ -37,6 +37,8 @@ import { format, addDays, isPast, isToday, differenceInDays, startOfWeek, endOfW
 import { ptBR } from 'date-fns/locale';
 import { UpdateMileageDialog } from '@/components/operator/UpdateMileageDialog'; 
 import { KPICard } from '@/components/admin/KPICard';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
 
 
 export default function OperatorDashboardPage() {
@@ -54,6 +56,7 @@ export default function OperatorDashboardPage() {
 
   const [isUpdateMileageDialogOpen, setIsUpdateMileageDialogOpen] = useState(false);
   const [vehicleToReturn, setVehicleToReturn] = useState<VehicleType | null>(null);
+  const [performanceReferenceDate, setPerformanceReferenceDate] = useState<Date>(new Date());
 
 
   const { data: vehicles, isLoading: vehiclesLoading, error: vehiclesError } = useQuery<VehicleType[], Error>({
@@ -168,14 +171,14 @@ export default function OperatorDashboardPage() {
         let isRelevantByDate = false;
         if (maint.scheduledDate) {
           const scheduledDateObj = new Date(maint.scheduledDate + "T00:00:00"); 
-          if (scheduledDateObj <= oneWeekFromNow) { // Vencido ou nos próximos 7 dias
+          if (scheduledDateObj <= oneWeekFromNow) { 
             isRelevantByDate = true;
           }
         }
 
         let isRelevantByKm = false;
         if (maint.scheduledKm && typeof vehicle.mileage === 'number') {
-          if (maint.scheduledKm <= vehicle.mileage + 11000) { // Vencido ou nos próximos 11000km
+          if (maint.scheduledKm <= vehicle.mileage + 11000) { 
             isRelevantByKm = true;
           }
         }
@@ -281,7 +284,7 @@ export default function OperatorDashboardPage() {
             <section className="lg:col-span-2 space-y-6">
                  <Skeleton className="h-64 w-full" />
                  <Skeleton className="h-32 w-full" />
-                 <Skeleton className="h-40 w-full" /> {/* Placeholder for KPIs */}
+                 <Skeleton className="h-40 w-full" /> 
             </section>
             <section className="lg:col-span-1">
                 <Skeleton className="h-96 w-full" />
@@ -310,11 +313,10 @@ export default function OperatorDashboardPage() {
     cancelled: { label: 'Cancelada', className: 'bg-red-500' },
   };
 
-  const now = new Date();
-  const currentWeekStart = startOfWeek(now, { weekStartsOn: 1 });
-  const currentWeekEnd = endOfWeek(now, { weekStartsOn: 1 });
-  const currentMonthStart = startOfMonth(now);
-  const currentMonthEnd = endOfMonth(now);
+  const currentWeekStart = startOfWeek(performanceReferenceDate, { weekStartsOn: 1 });
+  const currentWeekEnd = endOfWeek(performanceReferenceDate, { weekStartsOn: 1 });
+  const currentMonthStart = startOfMonth(performanceReferenceDate);
+  const currentMonthEnd = endOfMonth(performanceReferenceDate);
 
   let totalKmDriven = 0;
   let weeklyKmDriven = 0;
@@ -464,12 +466,38 @@ export default function OperatorDashboardPage() {
                 <ActivityIcon className="mr-2 h-6 w-6 text-primary" />
                 Minha Performance e Atividade
               </CardTitle>
-              <CardDescription>Resumo da sua quilometragem, checklists e ocorrências.</CardDescription>
+              <CardDescription>
+                Resumo da sua quilometragem, checklists e ocorrências.
+                <span className="mt-1 block text-xs">
+                  Dados referentes à semana de {format(currentWeekStart, "dd/MM", { locale: ptBR })} a {format(currentWeekEnd, "dd/MM/yyyy", { locale: ptBR })} e ao mês de {format(performanceReferenceDate, "MMMM 'de' yyyy", { locale: ptBR })}.
+                </span>
+              </CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {performanceKpis.map((kpi) => (
-                <KPICard key={kpi.title} kpi={kpi} />
-              ))}
+            <CardContent>
+              <div className="mb-6 flex justify-start">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-auto">
+                      <FilterCalendarIcon className="mr-2 h-4 w-4" />
+                      Data de Referência: {format(performanceReferenceDate, "PPP", { locale: ptBR })}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={performanceReferenceDate}
+                      onSelect={(date) => date && setPerformanceReferenceDate(date)}
+                      initialFocus
+                      disabled={(date) => date > new Date()} 
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {performanceKpis.map((kpi) => (
+                  <KPICard key={kpi.title} kpi={kpi} />
+                ))}
+              </div>
             </CardContent>
           </Card>
         </section>
@@ -594,11 +622,8 @@ export default function OperatorDashboardPage() {
                                detailParts.push(<span key="date-past" className="text-red-600 font-semibold">Data Venceu há {Math.abs(diffDays)} dia(s)</span>);
                            } else if (isToday(scheduledDateObj)) {
                                detailParts.push(<span key="date-today" className="text-red-600 font-semibold">Data Vence Hoje</span>);
-                           } else if (scheduledDateObj > today && scheduledDateObj <= oneWeekFromNow) { // Only within the next 7 days
+                           } else if (scheduledDateObj > today && scheduledDateObj <= oneWeekFromNow) { 
                                detailParts.push(<span key="date-upcoming" className="text-orange-500 font-semibold">Data em {diffDays} dia(s)</span>);
-                           } else {
-                                // Date is beyond 7 days, still show basic info if no KM alert
-                                // detailParts.push(<span key="date-info">Data Ag: {format(scheduledDateObj, 'dd/MM/yy', {locale: ptBR})}</span>);
                            }
                        }
 
@@ -609,9 +634,6 @@ export default function OperatorDashboardPage() {
                                detailParts.push(<span key="km-overdue" className="text-red-600 font-semibold">KM Vencido (Atual: {currentKm.toLocaleString('pt-BR')})</span>);
                            } else if (scheduledKmNum > currentKm && scheduledKmNum <= currentKm + 11000) { 
                                detailParts.push(<span key="km-upcoming" className="text-orange-500 font-semibold">Próx. KM em {(scheduledKmNum - currentKm).toLocaleString('pt-BR')} km</span>);
-                           } else {
-                                // KM is beyond 11000km, still show basic info if no Date alert
-                                // detailParts.push(<span key="km-info">KM Ag: {scheduledKmNum.toLocaleString('pt-BR')}</span>);
                            }
                        }
                        
@@ -659,4 +681,5 @@ export default function OperatorDashboardPage() {
     
 
     
+
 

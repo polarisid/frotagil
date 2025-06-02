@@ -191,3 +191,33 @@ export async function getChecklistForCurrentPossession(
   }
 }
 
+export async function getWeeklyChecklistsByOperator(
+  startDate: Date,
+  endDate: Date
+): Promise<{ [operatorId: string]: number }> {
+  const startTimestamp = Timestamp.fromDate(startDate);
+  const endTimestamp = Timestamp.fromDate(endDate);
+
+  const q = query(
+    checklistsCollection,
+    where('date', '>=', startTimestamp),
+    where('date', '<=', endTimestamp)
+  );
+
+  try {
+    const snapshot = await getDocs(q);
+    const checklistsByOperator: { [operatorId: string]: number } = {};
+
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const operatorId = data.operatorId as string;
+      checklistsByOperator[operatorId] = (checklistsByOperator[operatorId] || 0) + 1;
+    });
+
+    return checklistsByOperator;
+  } catch (error) {
+    console.error("Erro ao buscar checklists semanais por operador:", error);
+    throw error; // Rejeita o erro para ser tratado no componente que chama
+  }
+}
+

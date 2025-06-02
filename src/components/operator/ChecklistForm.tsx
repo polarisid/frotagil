@@ -26,8 +26,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { addChecklist as addChecklistService } from '@/lib/services/checklistService';
 import { updateVehicle as updateVehicleService, returnVehicle } from '@/lib/services/vehicleService';
 import jsPDF from 'jspdf';
+import { format as formatDateFn } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
-const checklistItemsDefinition: { name: keyof Omit<z.infer<typeof formSchema>, 'mileage' | 'observations' | 'signature'>; label: string; id: string }[] = [
+// Definindo os itens de checklist centralmente
+const checklistItemsDefinition: { name: keyof Omit<z.infer<ReturnType<typeof createFormSchema>>, 'mileage' | 'observations' | 'signature'>; label: string; id: string }[] = [
   { name: "tires", label: "Pneus calibrados e em bom estado?", id: "tires" },
   { name: "lights", label: "Luzes (faróis, lanternas, setas, freio) funcionando?", id: "lights" },
   { name: "brakes", label: "Freios (pedal e de mão) com resposta normal?", id: "brakes" },
@@ -42,24 +45,27 @@ const checklistItemsDefinition: { name: keyof Omit<z.infer<typeof formSchema>, '
   { name: "exteriorCleanliness", label: "Limpeza externa do veículo satisfatória?", id: "exteriorCleanliness" },
 ];
 
-const itemSchema = z.union([z.literal(true), z.literal(false)], {
-  required_error: "Selecione Sim ou Não.",
-  invalid_type_error: "Selecione uma opção válida (Sim ou Não).",
-});
+// Função para criar o schema Zod dinamicamente
+const createFormSchema = () => {
+    const schemaObject: any = {};
+    checklistItemsDefinition.forEach(item => {
+        // Alterado para permitir Sim ou Não obrigatoriamente
+        schemaObject[item.name] = z.union([z.literal(true), z.literal(false)], {
+            required_error: `Selecione Sim ou Não para: "${item.label}"`,
+            invalid_type_error: "Selecione uma opção válida (Sim ou Não).",
+        });
+    });
 
-const formSchemaObject: any = {};
-checklistItemsDefinition.forEach(item => {
-  formSchemaObject[item.name] = itemSchema;
-});
+    schemaObject.mileage = z.preprocess(
+      (val) => (val === "" || val === undefined || val === null ? undefined : Number(String(val).replace(/\./g, ''))),
+      z.number({ required_error: "KM é obrigatório." }).positive({ message: "KM deve ser um número positivo." })
+    );
+    schemaObject.observations = z.string().max(500, { message: "Observações devem ter no máximo 500 caracteres." }).optional();
+    schemaObject.signature = z.string().min(3, { message: 'Assinatura é obrigatória.' });
+    return z.object(schemaObject);
+};
 
-formSchemaObject.mileage = z.preprocess(
-  (val) => (val === "" || val === undefined || val === null ? undefined : Number(String(val).replace(/\./g, ''))),
-  z.number({ required_error: "KM é obrigatório." }).positive({ message: "KM deve ser um número positivo." })
-);
-formSchemaObject.observations = z.string().max(500, { message: "Observações devem ter no máximo 500 caracteres." }).optional();
-formSchemaObject.signature = z.string().min(3, { message: 'Assinatura é obrigatória.' });
-
-const formSchema = z.object(formSchemaObject);
+const formSchema = createFormSchema();
 
 
 interface ChecklistFormProps {
@@ -74,13 +80,16 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const defaultValuesFromExisting = existingChecklist ? 
+  const defaultValuesFromExisting = existingChecklist ?
     checklistItemsDefinition.reduce((acc, itemDef) => {
       const foundItem = existingChecklist.items.find(i => i.id === itemDef.id);
-      acc[itemDef.name] = foundItem?.value ?? undefined; // Use undefined if not found or value is null initially
+      acc[itemDef.name as keyof typeof acc] = foundItem?.value ?? undefined; // Permitir undefined para forçar escolha
       return acc;
-    }, {} as any) 
-  : {};
+    }, {} as Record<string, boolean | undefined>)
+  : checklistItemsDefinition.reduce((acc, itemDef) => {
+      acc[itemDef.name as keyof typeof acc] = undefined; // Todos os itens começam como não selecionados
+      return acc;
+    }, {} as Record<string, boolean | undefined>);
 
   const defaultValues = existingChecklist ? {
     ...defaultValuesFromExisting,
@@ -88,10 +97,10 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
     observations: existingChecklist.observations ?? '',
     signature: existingChecklist.signature,
   } : {
+    ...defaultValuesFromExisting,
     mileage: vehicle.mileage ?? undefined,
     observations: '',
     signature: currentOperatorName,
-    // Checklist items will be undefined by default, Zod will enforce selection
   };
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -105,7 +114,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
       const itemsForDb: ChecklistItemType[] = checklistItemsDefinition.map(itemDef => ({
         id: itemDef.id,
         label: itemDef.label,
-        value: values[itemDef.name as keyof typeof values] as boolean, // Cast as boolean, Zod ensures true/false
+        value: values[itemDef.name as keyof typeof values] as boolean, // Zod schema garante que é boolean
       }));
 
       const newChecklistData: Omit<Checklist, 'id' | 'date'> & { date: Date } = {
@@ -143,7 +152,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   });
 
   const returnVehicleMutation = useMutation({
-    mutationFn: () => returnVehicle(vehicle.id, currentOperatorId, vehicle.mileage),
+    mutationFn: () => returnVehicle(vehicle.id, currentOperatorId, vehicle.mileage ?? 0), // Passa o KM atual do veículo
     onSuccess: () => {
       toast({
         title: "Veículo Devolvido",
@@ -180,64 +189,170 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   }
 
   function handleExportPdf() {
-    const itemsToExport = existingChecklist 
-      ? existingChecklist.items 
+    const itemsToExport: ChecklistItemType[] = existingChecklist
+      ? existingChecklist.items
       : checklistItemsDefinition.map(itemDef => ({
           id: itemDef.id,
           label: itemDef.label,
           value: form.getValues(itemDef.name as keyof z.infer<typeof formSchema>) as boolean | null,
         }));
-    
-    const dataToExport = existingChecklist || { 
-        ...form.getValues(), 
+
+    const dataToExport = existingChecklist || {
+        ...form.getValues(),
         items: itemsToExport,
-        date: new Date().toISOString(), 
-        operatorName: currentOperatorName, 
-        signature: form.getValues("signature") 
+        date: new Date().toISOString(),
+        operatorName: currentOperatorName,
+        signature: form.getValues("signature")
     };
 
-
     const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.text('Relatório de Checklist de Veículo', 105, 20, { align: 'center' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const leftMargin = 15;
+    const rightMargin = 15;
+    const topMargin = 15; // Ajustado para dar espaço ao logo
+    const bottomMargin = 20;
+    const contentWidth = pageWidth - leftMargin - rightMargin;
+    let yPos = topMargin;
+    const lineHeight = 5; 
+    const cellPadding = 2;
 
-    doc.setFontSize(12);
-    doc.text(`Veículo: ${vehicle.make} ${vehicle.model} (Placa: ${vehicle.plate})`, 14, 35);
-    doc.text(`Operador: ${dataToExport.operatorName}`, 14, 42);
-    doc.text(`Data: ${new Date(dataToExport.date).toLocaleString('pt-BR')}`, 14, 49);
-    doc.text(`KM Registrado: ${dataToExport.mileage?.toLocaleString('pt-BR') || 'N/A'} km`, 14, 56);
+    // Desenhar Logo
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
+    yPos += 10; // Espaço após o logo
+
+
+    doc.setFontSize(18);
+    doc.setFont(undefined, 'bold');
+    doc.text('Relatório de Checklist de Veículo', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 15;
+
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Veículo: ${vehicle.make} ${vehicle.model} (Placa: ${vehicle.plate})`, leftMargin, yPos);
+    yPos += 7;
+    doc.text(`Operador: ${dataToExport.operatorName}`, leftMargin, yPos);
+    yPos += 7;
+    doc.text(`Data: ${formatDateFn(new Date(dataToExport.date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, leftMargin, yPos);
+    yPos += 7;
+    doc.text(`KM Registrado: ${dataToExport.mileage?.toLocaleString('pt-BR') || 'N/A'} km`, leftMargin, yPos);
+    yPos += 12;
 
     doc.setFontSize(14);
-    doc.text('Itens Verificados:', 14, 70);
-    let yPos = 78;
-    itemsToExport.forEach(item => {
-      doc.setFontSize(10);
-      const statusText = item.value === true ? 'Sim' : item.value === false ? 'Não' : 'N/A';
-      doc.text(`${item.label}: ${statusText}`, 20, yPos);
-      yPos += 7;
-      if (yPos > 280) { 
+    doc.setFont(undefined, 'bold');
+    doc.text('Itens Verificados:', leftMargin, yPos);
+    yPos += 8;
+
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    const itemColWidth = contentWidth * 0.80; 
+    const statusColWidth = contentWidth * 0.20;
+    const itemColX = leftMargin;
+    const statusColX = leftMargin + itemColWidth;
+
+    doc.text('Item', itemColX + cellPadding, yPos);
+    doc.text('Status', statusColX + cellPadding, yPos);
+    yPos += 5; 
+    doc.setLineWidth(0.3); 
+    doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos); 
+    yPos += 3; 
+    doc.setFont(undefined, 'normal');
+
+    const drawItemRowPdf = (itemLabel: string, itemValue: boolean | null) => {
+      const itemLabelLines = doc.splitTextToSize(itemLabel, itemColWidth - (cellPadding * 2));
+      const rowHeight = (itemLabelLines.length * lineHeight) + (cellPadding * 2);
+
+      if (yPos + rowHeight + 3 > pageHeight - bottomMargin) { 
         doc.addPage();
-        yPos = 20;
+        yPos = topMargin;
+        // Redesenhar logo e cabeçalho da página
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'bold');
+        doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
+        yPos += 10;
+        
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'bold');
+        doc.text('Item', itemColX + cellPadding, yPos);
+        doc.text('Status', statusColX + cellPadding, yPos);
+        yPos += 5;
+        doc.setLineWidth(0.3);
+        doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos);
+        yPos += 3; 
+        doc.setFont(undefined, 'normal');
       }
+      
+      const textY = yPos + cellPadding + (lineHeight * 0.7); 
+
+      doc.text(itemLabelLines, itemColX + cellPadding, textY);
+
+      let statusTextWithIcon = '- N/A'; 
+      doc.setFont(undefined, 'bold');
+      if (itemValue === true) {
+        doc.setTextColor(0, 100, 0); // Dark Green
+        statusTextWithIcon = "✓ Sim";
+      } else if (itemValue === false) {
+        doc.setTextColor(200, 0, 0); // Dark Red
+        statusTextWithIcon = "✗ Não";
+      } else {
+        doc.setTextColor(105, 105, 105); // Dark Grey
+      }
+      
+      doc.text(statusTextWithIcon, statusColX + cellPadding, textY);
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(0, 0, 0); // Reset color to black
+
+      yPos += rowHeight;
+      doc.setLineWidth(0.1); 
+      doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos); 
+      yPos += 3; 
+    };
+
+    itemsToExport.forEach(item => {
+        drawItemRowPdf(item.label, item.value);
     });
+    
+    yPos += 5; 
 
     if (dataToExport.observations) {
+      const obsTitleHeight = 7;
+      const obsTextHeight = doc.splitTextToSize(dataToExport.observations, contentWidth).length * lineHeight;
+      if (yPos + obsTitleHeight + obsTextHeight + 5 > pageHeight - bottomMargin) { 
+          doc.addPage(); yPos = topMargin; 
+          doc.setFontSize(10); doc.setFont(undefined, 'bold');
+          doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
+          yPos += 10;
+      }
       doc.setFontSize(12);
-      doc.text('Observações:', 14, yPos + 5);
+      doc.setFont(undefined, 'bold');
+      doc.text('Observações:', leftMargin, yPos);
+      yPos += obsTitleHeight;
       doc.setFontSize(10);
-      const splitObservations = doc.splitTextToSize(dataToExport.observations, 170);
-      doc.text(splitObservations, 20, yPos + 12);
-      yPos += (splitObservations.length * 5) + 12;
-       if (yPos > 280) { doc.addPage(); yPos = 20; }
+      doc.setFont(undefined, 'normal');
+      const splitObservations = doc.splitTextToSize(dataToExport.observations, contentWidth);
+      doc.text(splitObservations, leftMargin, yPos);
+      yPos += obsTextHeight + 5;
     }
 
+    const sigTitleHeight = 7;
+    const sigTextHeight = lineHeight; // Assuming signature is single line
+    if (yPos + sigTitleHeight + sigTextHeight + 5 > pageHeight - bottomMargin) { 
+        doc.addPage(); yPos = topMargin; 
+        doc.setFontSize(10); doc.setFont(undefined, 'bold');
+        doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
+        yPos += 10;
+    }
     doc.setFontSize(12);
-    doc.text('Assinatura (Digital):', 14, yPos + 10);
+    doc.setFont(undefined, 'bold');
+    doc.text('Assinatura (Digital):', leftMargin, yPos);
+    yPos += sigTitleHeight;
     doc.setFontSize(10);
     doc.setFont("courier", "normal");
-    doc.text(dataToExport.signature || currentOperatorName, 20, yPos + 17);
+    doc.text(dataToExport.signature || currentOperatorName, leftMargin, yPos);
 
-    doc.save(`checklist-${vehicle.plate}-${new Date(dataToExport.date).toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`);
+    doc.save(`checklist-${vehicle.plate}-${formatDateFn(new Date(dataToExport.date), "yyyy-MM-dd", { locale: ptBR })}.pdf`);
 
     toast({
       title: 'PDF Gerado',
@@ -269,7 +384,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
           <CardContent className="space-y-6">
             {checklistItemsDefinition.map(itemDef => (
               <FormField
-                key={itemDef.name}
+                key={itemDef.id} 
                 control={form.control}
                 name={itemDef.name}
                 render={({ field }) => (
@@ -278,7 +393,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
                     <FormControl>
                       <RadioGroup
                         onValueChange={(value) => field.onChange(value === 'true')}
-                        value={field.value === undefined ? undefined : String(field.value)}
+                        value={field.value === undefined ? "" : String(field.value)} 
                         className="flex space-x-4"
                         disabled={isViewing}
                       >
@@ -377,10 +492,10 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
                 </>
             ) : (
                 <>
-                    <Button 
-                        type="button" 
-                        variant="outline" 
-                        onClick={handleCancelAndReturnVehicle} 
+                    <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleCancelAndReturnVehicle}
                         className="w-full sm:w-auto"
                         disabled={returnVehicleMutation.isPending}
                     >
@@ -397,3 +512,4 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
     </Card>
   );
 }
+

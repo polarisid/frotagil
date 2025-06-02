@@ -35,14 +35,14 @@ export async function createVehicleUsageLog(
     const vehicleDocSnap = await getDoc(vehicleDocRef);
     if (vehicleDocSnap.exists()) {
       const vehicleData = vehicleDocSnap.data() as Vehicle;
-      initialMileage = vehicleData.mileage;
+      initialMileage = vehicleData.mileage ?? 0; // Use existing mileage or default to 0
     } else {
       console.warn(`Vehicle with ID ${vehicleId} not found when creating usage log. Initial mileage set to 0.`);
- initialMileage = 0; // Ensure it's 0 if vehicle not found
+      initialMileage = 0; 
     }
   } catch (error) {
     console.error(`Error fetching vehicle ${vehicleId} for initial mileage:`, error);
-    initialMileage = 0; // Ensure it's 0 if fetching fails
+    initialMileage = 0; 
   }
 
   const logEntry: Omit<VehicleUsageLog, 'id' | 'returnedTimestamp' | 'durationMinutes' | 'finalMileage' | 'kmDriven'> = {
@@ -51,7 +51,7 @@ export async function createVehicleUsageLog(
     operatorId,
     operatorName,
     pickedUpTimestamp: pickedUpTimestamp.toISOString(),
- status: 'active',
+    status: 'active',
     initialMileage,
   };
   const docRef = await addDoc(vehicleUsageLogsCollection, {
@@ -82,7 +82,6 @@ export async function completeVehicleUsageLog(
   }
 
   const logDoc = snapshot.docs[0];
-  // Explicitly type logData to include initialMileage and ensure pickedUpTimestamp is a Firestore Timestamp for conversion
   const logData = logDoc.data() as Omit<VehicleUsageLog, 'id' | 'pickedUpTimestamp'> & { pickedUpTimestamp: Timestamp, initialMileage?: number };
   
   const returnedTimestamp = new Date();
@@ -91,7 +90,7 @@ export async function completeVehicleUsageLog(
 
   if (logData.pickedUpTimestamp instanceof Timestamp) {
     durationMinutes = differenceInMinutes(returnedTimestamp, logData.pickedUpTimestamp.toDate());
-  } else if (typeof logData.pickedUpTimestamp === 'string') { // Should not happen for new logs
+  } else if (typeof logData.pickedUpTimestamp === 'string') { 
      durationMinutes = differenceInMinutes(returnedTimestamp, new Date(logData.pickedUpTimestamp));
   }
 
@@ -99,9 +98,8 @@ export async function completeVehicleUsageLog(
     if (finalMileage >= logData.initialMileage) {
       kmDriven = finalMileage - logData.initialMileage;
     } else {
-      // This case should ideally be caught by form validation when submitting final mileage
-      console.warn(`Final mileage (${finalMileage}) is less than initial mileage (${logData.initialMileage}) for log ${logDoc.id}. kmDriven will be 0 or undefined.`);
-      kmDriven = 0; // Or handle as an error/undefined
+      console.warn(`Final mileage (${finalMileage}) is less than initial mileage (${logData.initialMileage}) for log ${logDoc.id}. kmDriven will be 0.`);
+      kmDriven = 0; 
     }
   }
 
@@ -155,4 +153,97 @@ export async function getVehicleUsageLogs(filters: {
       returnedTimestamp: data.returnedTimestamp instanceof Timestamp ? data.returnedTimestamp.toDate().toISOString() : (data.returnedTimestamp || null),
     } as VehicleUsageLog;
   });
+}
+
+export async function getUsageLogsForPeriod(startDate: Date, endDate: Date, status: 'completed' | 'active' | 'all' = 'completed'): Promise<VehicleUsageLog[]> {
+  const startTimestamp = Timestamp.fromDate(startDate);
+  const endTimestamp = Timestamp.fromDate(endDate);
+
+  let q = query(
+    vehicleUsageLogsCollection,
+    where('pickedUpTimestamp', '>=', startTimestamp),
+    where('pickedUpTimestamp', '<=', endTimestamp)
+  );
+
+  if (status !== 'all') {
+    q = query(q, where('status', '==', status));
+  }
+  
+  q = query(q, orderBy('pickedUpTimestamp', 'desc'));
+
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(docSnap => {
+    const data = docSnap.data();
+    return {
+      id: docSnap.id,
+      ...data,
+      pickedUpTimestamp: data.pickedUpTimestamp instanceof Timestamp ? data.pickedUpTimestamp.toDate().toISOString() : data.pickedUpTimestamp,
+      returnedTimestamp: data.returnedTimestamp instanceof Timestamp ? data.returnedTimestamp.toDate().toISOString() : (data.returnedTimestamp || null),
+    } as VehicleUsageLog;
+  });
+}
+
+
+interface DailyMileage {
+  date: string; // YYYY-MM-DD
+  km: number;
+}
+
+interface OperatorWeeklyMileage {
+  operatorId: string;
+  operatorName: string;
+  totalWeeklyKm: number;
+  dailyBreakdown: DailyMileage[];
+}
+
+export async function getWeeklyMileageByOperator(startDate: Date, endDate: Date): Promise<OperatorWeeklyMileage[]> {
+  const startTimestamp = Timestamp.fromDate(startDate);
+  const endTimestamp = Timestamp.fromDate(endDate);
+
+  const q = query(
+    vehicleUsageLogsCollection,
+    where('pickedUpTimestamp', '>=', startTimestamp),
+    where('pickedUpTimestamp', '<=', endTimestamp),
+    where('status', '==', 'completed') // Only consider completed logs for KM driven
+  );
+
+  const snapshot = await getDocs(q);
+  const logs = snapshot.docs.map(docSnap => docSnap.data() as VehicleUsageLog);
+
+  const operatorMileageMap: { [operatorId: string]: OperatorWeeklyMileage } = {};
+
+  logs.forEach(log => {
+    if (!operatorMileageMap[log.operatorId]) {
+      operatorMileageMap[log.operatorId] = {
+        operatorId: log.operatorId,
+        operatorName: log.operatorName,
+        totalWeeklyKm: 0,
+        dailyBreakdown: [],
+      };
+    }
+    const kmDriven = log.kmDriven || 0;
+    operatorMileageMap[log.operatorId].totalWeeklyKm += kmDriven;
+
+    // Add to daily breakdown
+    if (log.pickedUpTimestamp) { // Ensure timestamp exists
+      const logDate = new Date(log.pickedUpTimestamp);
+      const dateString = logDate.toISOString().split('T')[0];
+      const dailyEntry = operatorMileageMap[log.operatorId].dailyBreakdown.find(d => d.date === dateString);
+      if (dailyEntry) {
+        dailyEntry.km += kmDriven;
+      } else {
+        operatorMileageMap[log.operatorId].dailyBreakdown.push({ date: dateString, km: kmDriven });
+      }
+    }
+  });
+
+  // Sort daily breakdown by date
+  Object.values(operatorMileageMap).forEach(operator => {
+    operator.dailyBreakdown.sort((a, b) => a.date.localeCompare(b.date));
+  });
+
+  // Convert map to array
+  const result = Object.values(operatorMileageMap);
+
+  return result;
 }

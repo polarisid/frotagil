@@ -84,3 +84,28 @@ export async function deleteIncident(id: string): Promise<void> {
   await deleteDoc(doc(db, 'incidents', id));
 }
 
+export async function getWeeklyIncidentsByOperator(startDate: Date, endDate: Date): Promise<{ operatorId: string; count: number }[]> {
+  const startTimestamp = Timestamp.fromDate(startDate);
+  const endTimestamp = Timestamp.fromDate(endDate);
+
+  const q = query(
+    incidentsCollection,
+    where('date', '>=', startTimestamp),
+    where('date', '<=', endTimestamp),
+    orderBy('date', 'desc') // Ordering by date is still useful for the query
+  );
+
+  const snapshot = await getDocs(q);
+  const incidentsByOperator: { [key: string]: number } = {};
+
+  snapshot.docs.forEach(doc => {
+    const data = doc.data();
+    const operatorId = data.operatorId as string;
+    if (operatorId) {
+      incidentsByOperator[operatorId] = (incidentsByOperator[operatorId] || 0) + 1;
+    }
+  });
+
+  return Object.keys(incidentsByOperator).map(operatorId => ({ operatorId, count: incidentsByOperator[operatorId] }));
+}
+

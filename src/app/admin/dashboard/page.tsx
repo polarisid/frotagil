@@ -80,7 +80,7 @@ export default function AdminDashboardPage() {
     .slice(0,5) || [];
 
   const kpis: KPI[] = [
-    { title: 'Total de Veículos', value: vehicles?.length || 0, icon: TruckIcon, bgColorClass: 'bg-blue-100 dark:bg-blue-900/30', href: '/admin/vehicles' },
+    { title: 'Total de Veículos', value: vehicles?.filter(v => v.status === 'active').length || 0, icon: TruckIcon, bgColorClass: 'bg-blue-100 dark:bg-blue-900/30', href: '/admin/vehicles' },
     { title: 'Em Manutenção', value: vehicles?.filter(v => v.status === 'maintenance').length || 0, icon: WrenchIcon, bgColorClass: 'bg-yellow-100 dark:bg-yellow-900/30', href: '/admin/maintenances?status=in_progress' },
     { title: 'Sinistros Pendentes', value: incidents?.filter(i => i.status === 'under_analysis' || i.status === 'reported').length || 0, icon: AlertTriangleIcon, bgColorClass: 'bg-orange-100 dark:bg-orange-900/30', href: '/admin/incidents?status=pending' },
     { title: 'Checklists Hoje', value: checklists?.filter(c => new Date(c.date).toDateString() === new Date().toDateString()).length || 0, icon: ListChecksIcon, bgColorClass: 'bg-green-100 dark:bg-green-900/30', href: '/admin/checklists?date=today' },
@@ -275,4 +275,3 @@ export default function AdminDashboardPage() {
     </Container>
   );
 }
-
