@@ -1,4 +1,3 @@
-
 'use client';
 
 import { PageTitle } from '@/components/shared/PageTitle';
@@ -6,7 +5,7 @@ import { Container } from '@/components/shared/Container';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { PlusCircleIcon, SearchIcon, FilterIcon, UploadCloudIcon, FileTextIcon, ListChecksIcon, AlertTriangleIcon, CheckCircleIcon, DownloadIcon } from 'lucide-react';
+import { PlusCircleIcon, SearchIcon, FilterIcon, UploadCloudIcon, FileTextIcon, ListChecksIcon, AlertTriangleIcon, CheckCircleIcon, DownloadIcon, CalendarWarningIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { MaintenanceTable } from '@/components/admin/MaintenanceTable';
 import type { Maintenance, Vehicle as VehicleType } from '@/lib/types';
@@ -15,14 +14,18 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getMaintenances, addMaintenance } from '@/lib/services/maintenanceService';
 import { getVehicles } from '@/lib/services/vehicleService';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useState, useRef, ChangeEvent } from 'react';
+import { useState, useRef, ChangeEvent, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription as DialogDesc, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import readXlsxFile, { Row } from 'read-excel-file';
 import * as XLSX from 'xlsx';
 import { useToast } from '@/hooks/use-toast';
-import { format, parse, isValid, parseISO } from 'date-fns';
+import { format, parse, isValid, parseISO, isPast, isToday, differenceInDays, addDays } from 'date-fns';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 
 const ALL_ITEMS_VALUE = "all";
+const KM_ALERT_THRESHOLD = 10000; // 10.000 km
+const DATE_UPCOMING_THRESHOLD_DAYS = 7; // Próximos 7 dias
 
 interface ParsedMaintenanceData {
   vehicleId?: string; // Found vehicle ID
@@ -43,6 +46,8 @@ export default function AdminMaintenancesPage() {
   const [searchDescription, setSearchDescription] = useState('');
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>(undefined);
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>(undefined);
+  const [showOnlyOverdue, setShowOnlyOverdue] = useState(false);
+  const [showUpcoming, setShowUpcoming] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [excelFile, setExcelFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -84,31 +89,24 @@ export default function AdminMaintenancesPage() {
   const parseDate = (dateInput: any): string | undefined => {
     if (!dateInput) return undefined;
     
-    // read-excel-file often converts Excel dates to JS Date objects
     if (dateInput instanceof Date && isValid(dateInput)) {
       return format(dateInput, 'yyyy-MM-dd');
     }
 
-    // Handle string dates (YYYY-MM-DD or DD/MM/YYYY)
     if (typeof dateInput === 'string') {
-      let parsedDate = parseISO(dateInput); // Handles YYYY-MM-DD and YYYY-MM-DDTHH:mm:ss.sssZ
+      let parsedDate = parseISO(dateInput); 
       if (isValid(parsedDate)) return format(parsedDate, 'yyyy-MM-dd');
       
       parsedDate = parse(dateInput, 'dd/MM/yyyy', new Date());
       if (isValid(parsedDate)) return format(parsedDate, 'yyyy-MM-dd');
 
-      // Fallback for YYYY-MM-DD just in case parseISO didn't catch it (e.g. no time component)
       parsedDate = parse(dateInput, 'yyyy-MM-dd', new Date());
       if (isValid(parsedDate)) return format(parsedDate, 'yyyy-MM-dd');
     }
     
-    // Handle Excel date numbers if read-excel-file didn't convert them
     if (typeof dateInput === 'number') {
       try {
-        // Excel epoch is Dec 30, 1899 for Windows, or Dec 31, 1899.
-        // However, `read-excel-file` usually handles this conversion.
-        // This is a fallback for direct number parsing if needed.
-        const excelEpoch = new Date(Date.UTC(1899, 11, 30)); // Use UTC to avoid timezone issues with epoch
+        const excelEpoch = new Date(Date.UTC(1899, 11, 30)); 
         const parsedDate = new Date(excelEpoch.getTime() + dateInput * 24 * 60 * 60 * 1000);
         if(isValid(parsedDate)) return format(parsedDate, 'yyyy-MM-dd');
       } catch (e) { /* ignore error if number parsing fails */ }
@@ -132,13 +130,12 @@ export default function AdminMaintenancesPage() {
 
     try {
       const rows = await readXlsxFile(excelFile);
-      // Skip header row (rows[0])
       const dataRows = rows.slice(1);
       const maintenancesToCreate: Omit<Maintenance, 'id'>[] = [];
 
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
-        const rowIndex = i + 2; // Excel row number
+        const rowIndex = i + 2; 
 
         const plate = String(row[1]).toUpperCase();
         const vehicle = vehiclesData.find(v => v.plate === plate);
@@ -165,46 +162,40 @@ export default function AdminMaintenancesPage() {
             continue;
         }
 
-        const dateRaw = row[4]; // "Data Realizada" column
+        const dateRaw = row[4]; 
         let scheduledDateExcel: string | undefined = undefined;
         let completionDateExcel: string | undefined = undefined;
 
         if (status === 'planned' || status === 'in_progress') {
           scheduledDateExcel = parseDate(dateRaw);
-          if (dateRaw && !scheduledDateExcel) { // If a date was provided but couldn't be parsed
+          if (dateRaw && !scheduledDateExcel) { 
             localErrors.push(`Linha ${rowIndex}: Data de agendamento '${dateRaw}' inválida para status '${statusRaw}'. Use AAAA-MM-DD ou DD/MM/AAAA.`);
             continue;
           }
-          // completionDateExcel remains undefined
         } else if (status === 'completed') {
           completionDateExcel = parseDate(dateRaw);
-          if (!completionDateExcel) { // Date is mandatory and must be valid for 'completed'
+          if (!completionDateExcel) { 
             localErrors.push(`Linha ${rowIndex}: Data de conclusão '${dateRaw}' é obrigatória e deve ser válida para status 'Concluída'. Use AAAA-MM-DD ou DD/MM/AAAA.`);
             continue;
           }
-          // scheduledDateExcel can be undefined or you might parse it from another column if available
         } else if (status === 'cancelled') {
-          // For 'cancelled', the date might be the original scheduled date or when it was cancelled.
-          // We'll assume it's the scheduledDate if provided.
-          scheduledDateExcel = parseDate(dateRaw);
+          scheduledDateExcel = parseDate(dateRaw); // Date might be the originally scheduled one that got cancelled
            if (dateRaw && !scheduledDateExcel) {
              localErrors.push(`Linha ${rowIndex}: Data '${dateRaw}' inválida para status '${statusRaw}'. Use AAAA-MM-DD ou DD/MM/AAAA.`);
              continue;
            }
-           // completionDateExcel remains undefined
         }
-
 
         const maintenanceEntry: Omit<Maintenance, 'id'> = {
           vehicleId: vehicle.id,
           description: String(row[3]),
-          type: 'preventive', // Default for plan
-          priority: 'medium', // Default for plan
+          type: 'preventive', 
+          priority: 'medium', 
           status: status,
-          scheduledKm: km, // can be undefined
-          scheduledDate: scheduledDateExcel, // can be undefined
-          completionDate: completionDateExcel, // can be undefined
-          cost: undefined, // Not in Excel template
+          scheduledKm: km, 
+          scheduledDate: scheduledDateExcel, 
+          completionDate: completionDateExcel, 
+          cost: undefined, 
           observations: `Importado via Excel. Modelo do veículo na planilha: ${String(row[0])}`,
         };
         maintenancesToCreate.push(maintenanceEntry);
@@ -251,20 +242,14 @@ export default function AdminMaintenancesPage() {
     const templateData = [
       ["Modelo", "Placa", "Kilometragem", "Itens da Manutenção", "Data Realizada", "Status"],
       ["Caminhão X", "ABC1D23", 150000, "Troca de óleo e filtros", "01/12/2024", "Planejada"],
-      ["Van Y", "DEF4E56", 85000, "Verificação de freios", "", "Em Progresso"], // Data pode ser vazia para "Em Progresso"
-      ["Pickup Z", "GHI7F89", 25000, "Revisão completa", "15/10/2024", "Concluída"], // Data é obrigatória para "Concluída"
+      ["Van Y", "DEF4E56", 85000, "Verificação de freios", "", "Em Progresso"], 
+      ["Pickup Z", "GHI7F89", 25000, "Revisão completa", "15/10/2024", "Concluída"], 
       ["Outro Modelo", "JKL0A12", 10000, "Inspeção geral", "20/01/2025", "Planejada"],
-      ["Caminhão A", "MNO3B45", 120000, "Ajuste de motor", "", "Cancelada"], // Data pode ser vazia para "Cancelada"
+      ["Caminhão A", "MNO3B45", 120000, "Ajuste de motor", "10/11/2024", "Cancelada"], // Example for Cancelled with a date
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(templateData);
-    // Ajustar largura das colunas (opcional, mas melhora a visualização)
     worksheet['!cols'] = [
-        { wch: 15 }, // Modelo
-        { wch: 10 }, // Placa
-        { wch: 12 }, // Kilometragem
-        { wch: 30 }, // Itens da Manutenção
-        { wch: 15 }, // Data Realizada
-        { wch: 15 }  // Status
+        { wch: 15 }, { wch: 10 }, { wch: 12 }, { wch: 30 }, { wch: 15 }, { wch: 15 }
     ];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "PlanoManutencao");
@@ -273,9 +258,82 @@ export default function AdminMaintenancesPage() {
   };
 
 
-  const filteredMaintenances = maintenancesData?.filter(maint => 
-    maint.description.toLowerCase().includes(searchDescription.toLowerCase())
-  ) || [];
+  const filteredMaintenances = useMemo(() => {
+    if (!maintenancesData || !vehiclesData) return [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const baseFiltered = maintenancesData.filter(maint => {
+        const vehicle = vehiclesData.find(v => v.id === maint.vehicleId);
+        if ((maint.status === 'planned' || maint.status === 'in_progress') && vehicle?.status === 'inactive') {
+          return false;
+        }
+        return maint.description.toLowerCase().includes(searchDescription.toLowerCase());
+      });
+
+    if (!showOnlyOverdue && !showUpcoming) {
+      return baseFiltered; // No overdue/upcoming filter applied, return after initial filters
+    }
+
+    return baseFiltered.filter(maint => {
+      // If any specific toggle (Overdue or Upcoming) is active,
+      // 'completed' or 'cancelled' maintenances should not pass these specific filters.
+      if (showOnlyOverdue || showUpcoming) {
+        if (maint.status === 'completed' || maint.status === 'cancelled') {
+          return false;
+        }
+      }
+
+      // At this point, maint.status is 'planned' or 'in_progress'
+      // (or it could be other statuses if neither toggle was active, but that's handled above)
+      const vehicle = vehiclesData?.find(v => v.id === maint.vehicleId);
+      
+      let isOverdueByDate = false;
+      if (maint.scheduledDate) {
+        const scheduledDateObj = parseISO(maint.scheduledDate);
+        if (isValid(scheduledDateObj) && scheduledDateObj < today) {
+          isOverdueByDate = true;
+        }
+      }
+
+      let isOverdueByKm = false;
+      if (vehicle && maint.scheduledKm && typeof vehicle.mileage === 'number') {
+        if (vehicle.mileage >= maint.scheduledKm) {
+          isOverdueByKm = true;
+        }
+      }
+      const isOverdue = isOverdueByDate || isOverdueByKm;
+
+      let isUpcomingByDate = false;
+      if (maint.scheduledDate && !isOverdueByDate) {
+          const scheduledDateObj = parseISO(maint.scheduledDate);
+          if (isValid(scheduledDateObj)) {
+              const diff = differenceInDays(scheduledDateObj, today);
+              if (diff >= 0 && diff <= DATE_UPCOMING_THRESHOLD_DAYS) { 
+                  isUpcomingByDate = true;
+              }
+          }
+      }
+      
+      let isUpcomingByKm = false;
+      if (vehicle && maint.scheduledKm && typeof vehicle.mileage === 'number' && !isOverdueByKm) {
+          if (vehicle.mileage >= maint.scheduledKm - KM_ALERT_THRESHOLD && vehicle.mileage < maint.scheduledKm) {
+              isUpcomingByKm = true;
+          }
+      }
+      const isUpcoming = isUpcomingByDate || isUpcomingByKm;
+
+      if (showOnlyOverdue && showUpcoming) return isOverdue || isUpcoming;
+      if (showOnlyOverdue) return isOverdue;
+      if (showUpcoming) return isUpcoming;
+      
+      // This should ideally not be reached if a toggle is on, as the item
+      // should either match the toggle or be filtered out.
+      // If neither toggle is on, this filter block isn't even entered for this item.
+      return false; 
+    });
+  }, [maintenancesData, vehiclesData, searchDescription, showOnlyOverdue, showUpcoming]);
+
 
   const isLoading = maintenancesLoading || vehiclesLoading;
   const queryError = maintenancesError || vehiclesError;
@@ -287,7 +345,7 @@ export default function AdminMaintenancesPage() {
         <Card className="mb-6 shadow-md">
           <CardHeader><Skeleton className="h-8 w-1/3" /></CardHeader>
           <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-             {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+             {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)} 
           </CardContent>
         </Card>
         <Skeleton className="h-64 w-full" />
@@ -328,17 +386,18 @@ export default function AdminMaintenancesPage() {
             Filtros de Manutenção
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           <Input 
             placeholder="Buscar por descrição..." 
             value={searchDescription}
             onChange={(e) => setSearchDescription(e.target.value)}
+            className="lg:col-span-1"
           />
-           <div>
+           <div className="lg:col-span-1">
             <label htmlFor="vehicle-filter-maint" className="mb-1 block text-sm font-medium text-muted-foreground">Veículo</label>
             <Select
               onValueChange={(value) => setSelectedVehicleId(value === ALL_ITEMS_VALUE ? undefined : value)}
-              value={selectedVehicleId}
+              value={selectedVehicleId || ALL_ITEMS_VALUE}
             >
               <SelectTrigger id="vehicle-filter-maint">
                 <SelectValue placeholder="Todos os veículos" />
@@ -349,11 +408,11 @@ export default function AdminMaintenancesPage() {
               </SelectContent>
             </Select>
           </div>
-           <div>
+           <div className="lg:col-span-1">
             <label htmlFor="status-filter-maint" className="mb-1 block text-sm font-medium text-muted-foreground">Status</label>
             <Select
               onValueChange={(value) => setSelectedStatus(value === ALL_ITEMS_VALUE ? undefined : value)}
-              value={selectedStatus}
+              value={selectedStatus || ALL_ITEMS_VALUE}
             >
               <SelectTrigger id="status-filter-maint">
                 <SelectValue placeholder="Todos os status" />
@@ -367,7 +426,29 @@ export default function AdminMaintenancesPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-end">
+          <div className="flex flex-col space-y-2 lg:col-span-1 justify-end">
+            <div className="flex items-center space-x-2 h-10 border border-input bg-background rounded-md px-3 py-2">
+              <Switch
+                id="overdue-filter"
+                checked={showOnlyOverdue}
+                onCheckedChange={setShowOnlyOverdue}
+                aria-label="Mostrar apenas manutenções vencidas"
+              />
+              <Label htmlFor="overdue-filter" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+                Apenas Vencidas
+              </Label>
+            </div>
+            <div className="flex items-center space-x-2 h-10 border border-input bg-background rounded-md px-3 py-2">
+              <Switch
+                id="upcoming-filter"
+                checked={showUpcoming}
+                onCheckedChange={setShowUpcoming}
+                aria-label="Mostrar manutenções próximas de vencer"
+              />
+              <Label htmlFor="upcoming-filter" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+                Próximas de Vencer
+              </Label>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -376,7 +457,7 @@ export default function AdminMaintenancesPage() {
 
       <Dialog open={isImportDialogOpen} onOpenChange={(isOpen) => {
           setIsImportDialogOpen(isOpen);
-          if (!isOpen) { // Reset state when dialog is closed
+          if (!isOpen) { 
             setExcelFile(null);
             if(fileInputRef.current) fileInputRef.current.value = '';
             setImportErrors([]);

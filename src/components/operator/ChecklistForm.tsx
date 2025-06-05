@@ -20,7 +20,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription }
 import { SignaturePad } from './SignaturePad';
 import type { Vehicle, Checklist, ChecklistItem as ChecklistItemType } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
-import { PrinterIcon, SendIcon, FilePenLineIcon, GaugeIcon, Undo2Icon } from 'lucide-react';
+import { PrinterIcon, SendIcon, FilePenLineIcon, GaugeIcon, Undo2Icon, RouteIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { addChecklist as addChecklistService } from '@/lib/services/checklistService';
@@ -30,7 +30,7 @@ import { format as formatDateFn } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 // Definindo os itens de checklist centralmente
-const checklistItemsDefinition: { name: keyof Omit<z.infer<ReturnType<typeof createFormSchema>>, 'mileage' | 'observations' | 'signature'>; label: string; id: string }[] = [
+const checklistItemsDefinition: { name: keyof Omit<z.infer<ReturnType<typeof createFormSchema>>, 'mileage' | 'observations' | 'signature' | 'routeDescription'>; label: string; id: string }[] = [
   { name: "tires", label: "Pneus calibrados e em bom estado?", id: "tires" },
   { name: "lights", label: "Luzes (faróis, lanternas, setas, freio) funcionando?", id: "lights" },
   { name: "brakes", label: "Freios (pedal e de mão) com resposta normal?", id: "brakes" },
@@ -49,7 +49,6 @@ const checklistItemsDefinition: { name: keyof Omit<z.infer<ReturnType<typeof cre
 const createFormSchema = () => {
     const schemaObject: any = {};
     checklistItemsDefinition.forEach(item => {
-        // Alterado para permitir Sim ou Não obrigatoriamente
         schemaObject[item.name] = z.union([z.literal(true), z.literal(false)], {
             required_error: `Selecione Sim ou Não para: "${item.label}"`,
             invalid_type_error: "Selecione uma opção válida (Sim ou Não).",
@@ -60,6 +59,7 @@ const createFormSchema = () => {
       (val) => (val === "" || val === undefined || val === null ? undefined : Number(String(val).replace(/\./g, ''))),
       z.number({ required_error: "KM é obrigatório." }).positive({ message: "KM deve ser um número positivo." })
     );
+    schemaObject.routeDescription = z.string().max(100, { message: "Descrição da rota não pode exceder 100 caracteres." }).optional();
     schemaObject.observations = z.string().max(500, { message: "Observações devem ter no máximo 500 caracteres." }).optional();
     schemaObject.signature = z.string().min(3, { message: 'Assinatura é obrigatória.' });
     return z.object(schemaObject);
@@ -83,22 +83,24 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   const defaultValuesFromExisting = existingChecklist ?
     checklistItemsDefinition.reduce((acc, itemDef) => {
       const foundItem = existingChecklist.items.find(i => i.id === itemDef.id);
-      acc[itemDef.name as keyof typeof acc] = foundItem?.value ?? undefined; // Permitir undefined para forçar escolha
+      acc[itemDef.name as keyof typeof acc] = foundItem?.value ?? undefined;
       return acc;
     }, {} as Record<string, boolean | undefined>)
   : checklistItemsDefinition.reduce((acc, itemDef) => {
-      acc[itemDef.name as keyof typeof acc] = undefined; // Todos os itens começam como não selecionados
+      acc[itemDef.name as keyof typeof acc] = undefined;
       return acc;
     }, {} as Record<string, boolean | undefined>);
 
   const defaultValues = existingChecklist ? {
     ...defaultValuesFromExisting,
     mileage: existingChecklist.mileage,
+    routeDescription: existingChecklist.routeDescription ?? '',
     observations: existingChecklist.observations ?? '',
     signature: existingChecklist.signature,
   } : {
     ...defaultValuesFromExisting,
     mileage: vehicle.mileage ?? undefined,
+    routeDescription: '',
     observations: '',
     signature: currentOperatorName,
   };
@@ -114,7 +116,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
       const itemsForDb: ChecklistItemType[] = checklistItemsDefinition.map(itemDef => ({
         id: itemDef.id,
         label: itemDef.label,
-        value: values[itemDef.name as keyof typeof values] as boolean, // Zod schema garante que é boolean
+        value: values[itemDef.name as keyof typeof values] as boolean,
       }));
 
       const newChecklistData: Omit<Checklist, 'id' | 'date'> & { date: Date } = {
@@ -124,6 +126,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
         date: new Date(),
         items: itemsForDb,
         mileage: values.mileage,
+        routeDescription: values.routeDescription ?? undefined,
         observations: values.observations ?? '',
         signature: values.signature,
       };
@@ -152,7 +155,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   });
 
   const returnVehicleMutation = useMutation({
-    mutationFn: () => returnVehicle(vehicle.id, currentOperatorId, vehicle.mileage ?? 0), // Passa o KM atual do veículo
+    mutationFn: () => returnVehicle(vehicle.id, currentOperatorId, vehicle.mileage ?? 0),
     onSuccess: () => {
       toast({
         title: "Veículo Devolvido",
@@ -202,7 +205,8 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
         items: itemsToExport,
         date: new Date().toISOString(),
         operatorName: currentOperatorName,
-        signature: form.getValues("signature")
+        signature: form.getValues("signature"),
+        routeDescription: form.getValues("routeDescription")
     };
 
     const doc = new jsPDF();
@@ -210,19 +214,17 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
     const pageHeight = doc.internal.pageSize.getHeight();
     const leftMargin = 15;
     const rightMargin = 15;
-    const topMargin = 15; // Ajustado para dar espaço ao logo
+    const topMargin = 15;
     const bottomMargin = 20;
     const contentWidth = pageWidth - leftMargin - rightMargin;
     let yPos = topMargin;
-    const lineHeight = 5; 
+    const lineHeight = 5;
     const cellPadding = 2;
 
-    // Desenhar Logo
     doc.setFontSize(10);
     doc.setFont(undefined, 'bold');
     doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
-    yPos += 10; // Espaço após o logo
-
+    yPos += 10;
 
     doc.setFontSize(18);
     doc.setFont(undefined, 'bold');
@@ -238,7 +240,12 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
     doc.text(`Data: ${formatDateFn(new Date(dataToExport.date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, leftMargin, yPos);
     yPos += 7;
     doc.text(`KM Registrado: ${dataToExport.mileage?.toLocaleString('pt-BR') || 'N/A'} km`, leftMargin, yPos);
-    yPos += 12;
+    yPos += 7;
+    if (dataToExport.routeDescription) {
+      doc.text(`Descrição da Rota: ${dataToExport.routeDescription}`, leftMargin, yPos);
+      yPos += 7;
+    }
+    yPos += 5; // Extra space before items
 
     doc.setFontSize(14);
     doc.setFont(undefined, 'bold');
@@ -247,27 +254,26 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
 
     doc.setFontSize(10);
     doc.setFont(undefined, 'bold');
-    const itemColWidth = contentWidth * 0.80; 
+    const itemColWidth = contentWidth * 0.80;
     const statusColWidth = contentWidth * 0.20;
     const itemColX = leftMargin;
     const statusColX = leftMargin + itemColWidth;
 
     doc.text('Item', itemColX + cellPadding, yPos);
     doc.text('Status', statusColX + cellPadding, yPos);
-    yPos += 5; 
-    doc.setLineWidth(0.3); 
-    doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos); 
-    yPos += 3; 
+    yPos += 5;
+    doc.setLineWidth(0.3);
+    doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos);
+    yPos += 3;
     doc.setFont(undefined, 'normal');
 
     const drawItemRowPdf = (itemLabel: string, itemValue: boolean | null) => {
       const itemLabelLines = doc.splitTextToSize(itemLabel, itemColWidth - (cellPadding * 2));
       const rowHeight = (itemLabelLines.length * lineHeight) + (cellPadding * 2);
 
-      if (yPos + rowHeight + 3 > pageHeight - bottomMargin) { 
+      if (yPos + rowHeight + 3 > pageHeight - bottomMargin) {
         doc.addPage();
         yPos = topMargin;
-        // Redesenhar logo e cabeçalho da página
         doc.setFontSize(10);
         doc.setFont(undefined, 'bold');
         doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
@@ -280,47 +286,47 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
         yPos += 5;
         doc.setLineWidth(0.3);
         doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos);
-        yPos += 3; 
+        yPos += 3;
         doc.setFont(undefined, 'normal');
       }
       
-      const textY = yPos + cellPadding + (lineHeight * 0.7); 
+      const textY = yPos + cellPadding + (lineHeight * 0.7);
 
       doc.text(itemLabelLines, itemColX + cellPadding, textY);
 
-      let statusTextWithIcon = '- N/A'; 
+      let statusTextWithIcon = '- N/A';
       doc.setFont(undefined, 'bold');
       if (itemValue === true) {
-        doc.setTextColor(0, 100, 0); // Dark Green
+        doc.setTextColor(0, 100, 0);
         statusTextWithIcon = "✓ Sim";
       } else if (itemValue === false) {
-        doc.setTextColor(200, 0, 0); // Dark Red
+        doc.setTextColor(200, 0, 0);
         statusTextWithIcon = "✗ Não";
       } else {
-        doc.setTextColor(105, 105, 105); // Dark Grey
+        doc.setTextColor(105, 105, 105);
       }
       
       doc.text(statusTextWithIcon, statusColX + cellPadding, textY);
       doc.setFont(undefined, 'normal');
-      doc.setTextColor(0, 0, 0); // Reset color to black
+      doc.setTextColor(0, 0, 0);
 
       yPos += rowHeight;
-      doc.setLineWidth(0.1); 
-      doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos); 
-      yPos += 3; 
+      doc.setLineWidth(0.1);
+      doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos);
+      yPos += 3;
     };
 
     itemsToExport.forEach(item => {
         drawItemRowPdf(item.label, item.value);
     });
     
-    yPos += 5; 
+    yPos += 5;
 
     if (dataToExport.observations) {
       const obsTitleHeight = 7;
       const obsTextHeight = doc.splitTextToSize(dataToExport.observations, contentWidth).length * lineHeight;
-      if (yPos + obsTitleHeight + obsTextHeight + 5 > pageHeight - bottomMargin) { 
-          doc.addPage(); yPos = topMargin; 
+      if (yPos + obsTitleHeight + obsTextHeight + 5 > pageHeight - bottomMargin) {
+          doc.addPage(); yPos = topMargin;
           doc.setFontSize(10); doc.setFont(undefined, 'bold');
           doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
           yPos += 10;
@@ -337,9 +343,9 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
     }
 
     const sigTitleHeight = 7;
-    const sigTextHeight = lineHeight; // Assuming signature is single line
-    if (yPos + sigTitleHeight + sigTextHeight + 5 > pageHeight - bottomMargin) { 
-        doc.addPage(); yPos = topMargin; 
+    const sigTextHeight = lineHeight;
+    if (yPos + sigTitleHeight + sigTextHeight + 5 > pageHeight - bottomMargin) {
+        doc.addPage(); yPos = topMargin;
         doc.setFontSize(10); doc.setFont(undefined, 'bold');
         doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
         yPos += 10;
@@ -384,7 +390,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
           <CardContent className="space-y-6">
             {checklistItemsDefinition.map(itemDef => (
               <FormField
-                key={itemDef.id} 
+                key={itemDef.id}
                 control={form.control}
                 name={itemDef.name}
                 render={({ field }) => (
@@ -393,7 +399,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
                     <FormControl>
                       <RadioGroup
                         onValueChange={(value) => field.onChange(value === 'true')}
-                        value={field.value === undefined ? "" : String(field.value)} 
+                        value={field.value === undefined ? "" : String(field.value)}
                         className="flex space-x-4"
                         disabled={isViewing}
                       >
@@ -437,6 +443,28 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
                         const rawValue = e.target.value;
                         field.onChange(rawValue === '' ? undefined : Number(rawValue));
                       }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="routeDescription"
+              render={({ field }) => (
+                <FormItem>
+                   <div className="flex items-center">
+                    <RouteIcon className="mr-2 h-5 w-5 text-primary" />
+                    <FormLabel>Descrição da Rota (Opcional)</FormLabel>
+                  </div>
+                  <FormControl>
+                    <Input
+                      placeholder="Ex: Rota Capital, Rota PE, Entrega Cliente X"
+                      {...field}
+                      disabled={isViewing}
+                      value={field.value ?? ''}
                     />
                   </FormControl>
                   <FormMessage />
@@ -512,4 +540,3 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
     </Card>
   );
 }
-

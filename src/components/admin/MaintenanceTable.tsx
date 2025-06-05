@@ -13,13 +13,14 @@ import {
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { EyeIcon, Edit3Icon, MoreHorizontalIcon, CheckCircle2Icon, Settings2Icon, XCircleIcon, ClockIcon, Trash2Icon } from 'lucide-react';
+import { EyeIcon, Edit3Icon, MoreHorizontalIcon, CheckCircle2Icon, Settings2Icon, XCircleIcon, ClockIcon, Trash2Icon, CalendarWarningIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateMaintenance, deleteMaintenance as deleteMaintenanceService } from '@/lib/services/maintenanceService';
-import { format } from 'date-fns';
+import { format, parseISO, differenceInDays, isPast, isToday, isValid, addDays } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,6 +33,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useState } from 'react';
 
+const KM_ALERT_THRESHOLD = 10000; // 10.000 km
+const DATE_UPCOMING_THRESHOLD_DAYS = 7; // Próximos 7 dias
 
 interface MaintenanceTableProps {
   maintenances: Maintenance[];
@@ -44,12 +47,9 @@ export function MaintenanceTable({ maintenances, vehicles }: MaintenanceTablePro
   const [isAlertOpen, setIsAlertOpen] = useState(false);
   const [maintenanceToDelete, setMaintenanceToDelete] = useState<Maintenance | null>(null);
 
-  console.log('[MaintenanceTable] maintenances prop received:', maintenances);
-
-
   const getVehicleInfo = (vehicleId: string) => {
     const vehicle = vehicles.find(v => v.id === vehicleId);
-    return vehicle ? `${vehicle.make} ${vehicle.model} (${vehicle.plate})` : 'N/A';
+    return vehicle ? `${vehicle.plate} (${vehicle.make} ${vehicle.model})` : 'N/A';
   };
 
   const statusConfig = {
@@ -101,24 +101,28 @@ export function MaintenanceTable({ maintenances, vehicles }: MaintenanceTablePro
 
 
   const handleViewDetails = (maintenance: Maintenance) => {
+    const vehicle = vehicles.find(v => v.id === maintenance.vehicleId);
     toast({
       title: `Detalhes da Manutenção ${maintenance.id.substring(0,8)}`,
       description: (
         <div className="text-sm space-y-1">
-          <p><strong>Veículo:</strong> {getVehicleInfo(maintenance.vehicleId)}</p>
+          <p><strong>Veículo:</strong> {vehicle ? `${vehicle.plate} (${vehicle.make} ${vehicle.model})` : 'N/A'}</p>
           <p><strong>Tipo:</strong> {maintenance.type === 'corrective' ? 'Corretiva' : 'Preventiva'}</p>
           <p><strong>Descrição:</strong> {maintenance.description}</p>
           <p><strong>Status:</strong> {statusConfig[maintenance.status]?.label || maintenance.status}</p>
-          {maintenance.scheduledDate && <p><strong>Data Ag.:</strong> {new Date(maintenance.scheduledDate + 'T00:00:00').toLocaleDateString('pt-BR')}</p>}
+          {maintenance.scheduledDate && <p><strong>Data Ag.:</strong> {format(parseISO(maintenance.scheduledDate), 'dd/MM/yyyy', { locale: ptBR })}</p>}
           {maintenance.scheduledKm && <p><strong>KM Ag.:</strong> {maintenance.scheduledKm.toLocaleString('pt-BR')}</p>}
           {maintenance.cost && <p><strong>Custo:</strong> R$ {maintenance.cost.toFixed(2)}</p>}
-          {maintenance.completionDate && <p><strong>Data Conclusão:</strong> {new Date(maintenance.completionDate + 'T00:00:00').toLocaleDateString('pt-BR')}</p>}
+          {maintenance.completionDate && <p><strong>Data Conclusão:</strong> {format(parseISO(maintenance.completionDate), 'dd/MM/yyyy', { locale: ptBR })}</p>}
           {maintenance.observations && <p><strong>Obs:</strong> {maintenance.observations}</p>}
         </div>
       ),
-      duration: 10000, // Longer duration for details
+      duration: 10000, 
     });
   };
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   return (
     <>
@@ -129,7 +133,7 @@ export function MaintenanceTable({ maintenances, vehicles }: MaintenanceTablePro
             <TableHead>Veículo</TableHead>
             <TableHead>Descrição</TableHead>
             <TableHead className="hidden sm:table-cell">Tipo</TableHead>
-            <TableHead className="hidden md:table-cell">Agendamento</TableHead>
+            <TableHead className="hidden md:table-cell">Agendamento / Vencimento</TableHead>
             <TableHead>Status</TableHead>
             <TableHead className="text-right">Ações</TableHead>
           </TableRow>
@@ -138,26 +142,114 @@ export function MaintenanceTable({ maintenances, vehicles }: MaintenanceTablePro
           {maintenances.length === 0 && (
             <TableRow>
               <TableCell colSpan={6} className="h-24 text-center">
-                Nenhuma manutenção registrada.
+                Nenhuma manutenção registrada para os filtros aplicados.
               </TableCell>
             </TableRow>
           )}
           {maintenances.map((maintenance) => {
-            const currentStatus = statusConfig[maintenance.status] || { label: maintenance.status, icon: Settings2Icon, className: 'bg-gray-100 text-gray-700 border-gray-500' };
-            const Icon = currentStatus.icon;
+            const currentStatusConfig = statusConfig[maintenance.status] || { label: maintenance.status, icon: Settings2Icon, className: 'bg-gray-100 text-gray-700 border-gray-500' };
+            const StatusIcon = currentStatusConfig.icon;
+            
+            const vehicle = vehicles.find(v => v.id === maintenance.vehicleId);
+            let isOverdueByDate = false;
+            let isOverdueByKm = false;
+            let isUpcomingByDate = false;
+            let isUpcomingByKm = false;
+
+            if (maintenance.status === 'planned' || maintenance.status === 'in_progress') {
+                if (maintenance.scheduledDate) {
+                    const scheduledDateObj = parseISO(maintenance.scheduledDate);
+                    if (isValid(scheduledDateObj)) {
+                        if (scheduledDateObj < today) {
+                            isOverdueByDate = true;
+                        } else {
+                            const diffDays = differenceInDays(scheduledDateObj, today);
+                            if (diffDays >= 0 && diffDays <= DATE_UPCOMING_THRESHOLD_DAYS) { // Not past, but within X days including today
+                                isUpcomingByDate = true;
+                            }
+                        }
+                    }
+                }
+                if (vehicle && maintenance.scheduledKm && typeof vehicle.mileage === 'number') {
+                    if (vehicle.mileage >= maintenance.scheduledKm) {
+                        isOverdueByKm = true;
+                    } else if (vehicle.mileage >= maintenance.scheduledKm - KM_ALERT_THRESHOLD) {
+                        isUpcomingByKm = true;
+                    }
+                }
+            }
+            const isOverdue = isOverdueByDate || isOverdueByKm;
+            
+            let scheduleDisplay = '-';
+            let scheduleClass = '';
+            let rowClass = '';
+
+            if (isOverdue) {
+                rowClass = 'bg-red-50 dark:bg-red-900/20';
+                scheduleClass = 'text-red-600 font-semibold';
+            } else if (isUpcomingByKm) {
+                rowClass = 'bg-yellow-50 dark:bg-yellow-900/30';
+                scheduleClass = 'text-yellow-600 font-semibold';
+            } else if (isUpcomingByDate) {
+                rowClass = 'bg-orange-50 dark:bg-orange-900/30';
+                scheduleClass = 'text-orange-600 font-semibold';
+            }
+
+
+            if (maintenance.scheduledDate) {
+              const scheduledDateObj = parseISO(maintenance.scheduledDate);
+              if (isValid(scheduledDateObj)) {
+                const diffDays = differenceInDays(scheduledDateObj, today);
+                if (isOverdueByDate) {
+                  scheduleDisplay = `${format(scheduledDateObj, 'dd/MM/yy', { locale: ptBR })} (Venceu há ${Math.abs(diffDays)}d)`;
+                } else if (isToday(scheduledDateObj)) {
+                  scheduleDisplay = `${format(scheduledDateObj, 'dd/MM/yy', { locale: ptBR })} (Hoje!)`;
+                  if(!isOverdue) scheduleClass = 'text-orange-500 font-semibold'; // If not overdue, it's just "due today"
+                } else if (isUpcomingByDate) {
+                    scheduleDisplay = `${format(scheduledDateObj, 'dd/MM/yy', { locale: ptBR })} (Vence em ${diffDays}d - Próximo!)`;
+                } else {
+                  scheduleDisplay = `${format(scheduledDateObj, 'dd/MM/yy', { locale: ptBR })}${diffDays > 0 ? ` (em ${diffDays}d)` : ''}`;
+                }
+              }
+            } else if (maintenance.scheduledKm) {
+              scheduleDisplay = `${maintenance.scheduledKm.toLocaleString('pt-BR')} km`;
+              if (vehicle && typeof vehicle.mileage === 'number') {
+                const kmDiff = maintenance.scheduledKm - vehicle.mileage;
+                if (isOverdueByKm) {
+                  scheduleDisplay += ` (KM Vencido - Atual: ${vehicle.mileage.toLocaleString('pt-BR')})`;
+                } else if (isUpcomingByKm) {
+                  scheduleDisplay += ` (Faltam ${kmDiff.toLocaleString('pt-BR')} km - Próximo!)`;
+                } else {
+                  scheduleDisplay += ` (Faltam ${kmDiff.toLocaleString('pt-BR')} km)`;
+                }
+              }
+            }
+            
+            if (maintenance.status === 'completed' && maintenance.completionDate) {
+                scheduleDisplay = `Concluída em ${format(parseISO(maintenance.completionDate), 'dd/MM/yy', { locale: ptBR })}`;
+                scheduleClass = ''; // Reset class for completed
+                rowClass = ''; // Reset row class for completed
+            }
+            if (maintenance.status === 'cancelled') {
+                scheduleClass = '';
+                rowClass = '';
+            }
+
+
             return (
-              <TableRow key={maintenance.id} className="hover:bg-muted/50">
-                <TableCell>{getVehicleInfo(maintenance.vehicleId)}</TableCell>
-                <TableCell className="truncate max-w-xs">{maintenance.description}</TableCell>
+              <TableRow key={maintenance.id} className={cn("hover:bg-muted/50", (maintenance.status === 'planned' || maintenance.status === 'in_progress') ? rowClass : '')}>
+                <TableCell className={cn((isOverdue || isUpcomingByKm || isUpcomingByDate) && (maintenance.status === 'planned' || maintenance.status === 'in_progress') ? 'font-medium' : '')}>
+                    {getVehicleInfo(maintenance.vehicleId)}
+                </TableCell>
+                <TableCell className={cn("truncate max-w-xs", (isOverdue || isUpcomingByKm || isUpcomingByDate) && (maintenance.status === 'planned' || maintenance.status === 'in_progress') ? 'font-medium' : '')}>{maintenance.description}</TableCell>
                 <TableCell className="hidden sm:table-cell capitalize">{maintenance.type === 'corrective' ? 'Corretiva' : 'Preventiva'}</TableCell>
-                <TableCell className="hidden md:table-cell">
-                  {maintenance.scheduledDate ? new Date(maintenance.scheduledDate + 'T00:00:00').toLocaleDateString('pt-BR') : 
-                   maintenance.scheduledKm ? `${maintenance.scheduledKm.toLocaleString('pt-BR')} km` : '-'}
+                <TableCell className={cn("hidden md:table-cell", scheduleClass)}>
+                  {scheduleDisplay}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className={cn("text-xs", currentStatus.className)}>
-                    <Icon className="mr-1 h-3 w-3" />
-                    {currentStatus.label}
+                  <Badge variant="outline" className={cn("text-xs", currentStatusConfig.className)}>
+                    <StatusIcon className="mr-1 h-3 w-3" />
+                    {currentStatusConfig.label}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right">

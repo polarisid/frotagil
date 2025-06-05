@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { AlertTriangleIcon, CheckCircle2Icon, XCircleIcon, CalendarIcon, UserIcon, TruckIcon, FileTextIcon, GaugeIcon, MinusCircleIcon } from 'lucide-react';
+import { AlertTriangleIcon, CheckCircle2Icon, XCircleIcon, CalendarIcon, UserIcon, TruckIcon, FileTextIcon, GaugeIcon, MinusCircleIcon, RouteIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -75,6 +75,7 @@ export default function AdminViewChecklistPage() {
                 <div className="space-y-6">
                     <Skeleton className="h-32 w-full" />
                     <Skeleton className="h-32 w-full" />
+                    <Skeleton className="h-20 w-full" />
                 </div>
             </div>
             <Skeleton className="h-24 w-full mt-6" />
@@ -83,7 +84,6 @@ export default function AdminViewChecklistPage() {
     );
   }
 
-  // If still loading or redirecting, show a generic loading/redirect message
   if (!currentUser || currentUser.role !== 'admin') {
     return <Container><Alert variant="destructive"><AlertDescription>Acesso não autorizado. Redirecionando...</AlertDescription></Alert></Container>;
   }
@@ -185,6 +185,17 @@ export default function AdminViewChecklistPage() {
                 </p>
                 </CardContent>
             </Card>
+
+            {checklist.routeDescription && (
+              <Card className="shadow-md">
+                  <CardHeader>
+                      <CardTitle className="flex items-center"><RouteIcon className="mr-2 h-5 w-5 text-primary" />Descrição da Rota</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                      <p className="text-sm">{checklist.routeDescription}</p>
+                  </CardContent>
+              </Card>
+            )}
         </div>
       </div>
 
@@ -218,3 +229,4 @@ export default function AdminViewChecklistPage() {
     </Container>
   );
 }
+

@@ -13,7 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { format, intervalToDuration, formatDuration } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { ClockIcon, CheckCircle2Icon, TruckIcon } from 'lucide-react';
+import { ClockIcon, CheckCircle2Icon, TruckIcon, RouteIcon } from 'lucide-react';
 
 interface VehicleUsageTableProps {
   usageLogs: VehicleUsageLog[];
@@ -81,6 +81,7 @@ export function VehicleUsageTable({ usageLogs, vehicles, users }: VehicleUsageTa
             <TableHead>Retirada</TableHead>
             <TableHead>Devolução</TableHead>
             <TableHead className="hidden sm:table-cell">Duração</TableHead>
+            <TableHead className="hidden md:table-cell">Rota</TableHead>
             <TableHead>Status</TableHead>
           </TableRow>
         </TableHeader>
@@ -92,6 +93,9 @@ export function VehicleUsageTable({ usageLogs, vehicles, users }: VehicleUsageTa
               <TableCell>{formatTimestamp(log.pickedUpTimestamp)}</TableCell>
               <TableCell>{log.status === 'completed' ? formatTimestamp(log.returnedTimestamp) : 'Em uso'}</TableCell>
               <TableCell className="hidden sm:table-cell">{getDuration(log)}</TableCell>
+              <TableCell className="hidden md:table-cell truncate max-w-[150px]">
+                {log.routeDescription || '-'}
+              </TableCell>
               <TableCell>
                 {log.status === 'completed' ? (
                   <Badge variant="default" className="bg-green-500 hover:bg-green-600 text-white">
@@ -110,3 +114,4 @@ export function VehicleUsageTable({ usageLogs, vehicles, users }: VehicleUsageTa
     </div>
   );
 }
+

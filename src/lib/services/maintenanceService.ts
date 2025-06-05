@@ -25,14 +25,20 @@ export async function getMaintenances(filters?: { vehicleId?: string; status?: s
   if (filters?.vehicleId) {
     q = query(q, where('vehicleId', '==', filters.vehicleId));
   }
+
   if (filters?.status) {
     q = query(q, where('status', '==', filters.status));
-    // If status is filtered, simplify the orderBy
+    // If status is filtered, order by scheduledDate
     q = query(q, orderBy('scheduledDate', 'asc'));
   } else {
-    // If status is not filtered, use the potentially more complex ordering
-    // that might align with the index Firebase is suggesting for other cases.
-    q = query(q, orderBy('scheduledDate', 'asc'), orderBy('description', 'asc'));
+    // Status is NOT filtered
+    // Only order by scheduledDate if vehicleId is also NOT filtered.
+    // If vehicleId IS filtered (but status is not), we avoid ordering by scheduledDate
+    // to prevent the specific index error for (vehicleId, scheduledDate).
+    if (!filters?.vehicleId) {
+      q = query(q, orderBy('scheduledDate', 'asc'));
+    }
+    // If filters.vehicleId is defined here, no orderBy('scheduledDate') is added from this block.
   }
 
   const snapshot = await getDocs(q);
@@ -82,9 +88,9 @@ export async function addMaintenance(maintenanceData: Omit<Maintenance, 'id'>): 
     type,
     description,
     priority,
-    observations: inputObservations === undefined ? null : inputObservations, // Ensure undefined becomes null
+    observations: inputObservations === undefined ? null : inputObservations, 
     status: inputStatus || 'planned',
-    attachments: inputAttachments === undefined ? null : inputAttachments, // Ensure undefined becomes null
+    attachments: inputAttachments === undefined ? null : inputAttachments, 
   };
 
   dataToSave.cost = (inputCost !== undefined && inputCost !== null && String(inputCost).trim() !== '') ? Number(inputCost) : null;
@@ -147,7 +153,7 @@ export async function updateMaintenance(id: string, maintenanceData: Partial<Omi
   const dataToUpdate: any = { ...maintenanceData };
 
   const parseAndPrepareDateForUpdate = (dateInput: string | Date | undefined | null, fieldName: string) => {
-    if (maintenanceData.hasOwnProperty(fieldName)) { // Only process if field is explicitly in maintenanceData
+    if (maintenanceData.hasOwnProperty(fieldName)) { 
         if (dateInput === undefined || dateInput === null || String(dateInput).trim() === '') {
           dataToUpdate[fieldName] = null;
         } else {
@@ -168,8 +174,8 @@ export async function updateMaintenance(id: string, maintenanceData: Partial<Omi
             dataToUpdate[fieldName] = null;
           }
         }
-    } else if (dataToUpdate.hasOwnProperty(fieldName)) { // Field was in original spread but not explicitly in maintenanceData
-        delete dataToUpdate[fieldName]; // Remove if not explicitly passed for update, to avoid accidentally setting to null
+    } else if (dataToUpdate.hasOwnProperty(fieldName)) { 
+        delete dataToUpdate[fieldName]; 
     }
   };
 
@@ -196,7 +202,7 @@ export async function updateMaintenance(id: string, maintenanceData: Partial<Omi
     dataToUpdate.completionDate = null;
   }
 
-  // Clean up any undefined values that were spread from maintenanceData but not explicitly handled
+  
   Object.keys(dataToUpdate).forEach(key => {
     if (dataToUpdate[key] === undefined && !maintenanceData.hasOwnProperty(key as keyof typeof maintenanceData)) {
       delete dataToUpdate[key];

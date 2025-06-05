@@ -16,7 +16,7 @@ import {
   limit
 } from 'firebase/firestore';
 import { createVehicleUsageLog, getActiveUsageLogForVehicleAndOperator } from './vehicleUsageLogService';
-import { updateVehicle as updateVehicleService, getVehicleById } from './vehicleService'; // Renamed to avoid conflict
+import { updateVehicle as updateVehicleService, getVehicleById } from './vehicleService'; 
 
 const checklistsCollection = collection(db, 'checklists');
 
@@ -72,12 +72,15 @@ export async function addChecklist(checklistData: Omit<Checklist, 'id' | 'date'>
     await updateVehicleService(checklistData.vehicleId, { mileage: checklistData.mileage });
   }
 
-  // Check if this is the first checklist for the current vehicle possession
-  // and create VehicleUsageLog if needed.
   const vehicle = await getVehicleById(checklistData.vehicleId);
+  let activeLogIdToUpdate: string | null = null;
+
   if (vehicle && vehicle.pickedUpDate && vehicle.assignedOperatorId === checklistData.operatorId) {
     const checklistTimestamp = Timestamp.fromDate(checklistData.date);
-    const pickedUpTimestamp = Timestamp.fromDate(new Date(vehicle.pickedUpDate));
+    // Ensure pickedUpDate is parsed correctly if it's an ISO string
+    const pickedUpDateObj = new Date(vehicle.pickedUpDate);
+    const pickedUpTimestamp = Timestamp.fromDate(pickedUpDateObj);
+
 
     if (checklistTimestamp >= pickedUpTimestamp) {
       const existingActiveLog = await getActiveUsageLogForVehicleAndOperator(checklistData.vehicleId, checklistData.operatorId);
@@ -85,13 +88,26 @@ export async function addChecklist(checklistData: Omit<Checklist, 'id' | 'date'>
         if (checklistData.mileage === undefined) {
           console.warn(`Cannot create VehicleUsageLog for checklist ${docRef.id} because checklist mileage is undefined.`);
         } else {
-          await createVehicleUsageLog(
+          activeLogIdToUpdate = await createVehicleUsageLog(
             checklistData.vehicleId,
-            vehicle.plate, // Assuming vehicle object has plate
+            vehicle.plate, 
             checklistData.operatorId,
             checklistData.operatorName,
-            checklistData.mileage // This is the initial mileage for the usage log
+            checklistData.mileage 
           );
+        }
+      } else {
+        activeLogIdToUpdate = existingActiveLog.id;
+      }
+
+      // If an active log exists (either pre-existing or just created)
+      // AND the current checklist has a routeDescription, update the log.
+      if (activeLogIdToUpdate && checklistData.routeDescription) {
+        try {
+          const logDocRef = doc(db, 'vehicleUsageLogs', activeLogIdToUpdate);
+          await updateDoc(logDocRef, { routeDescription: checklistData.routeDescription });
+        } catch (error) {
+          console.error(`Error updating active usage log ${activeLogIdToUpdate} with route description:`, error);
         }
       }
     }
@@ -185,7 +201,13 @@ export async function getChecklistForCurrentPossession(
 
   let pickedUpTimestamp;
   try {
-    pickedUpTimestamp = Timestamp.fromDate(new Date(pickedUpDateISO));
+    // Ensure pickedUpDateISO is parsed correctly. If it's already a valid Date object string, new Date() will handle it.
+    const pickedUpDateObj = new Date(pickedUpDateISO);
+    if (isNaN(pickedUpDateObj.getTime())) {
+        console.error('getChecklistForCurrentPossession: Invalid date string provided for pickedUpDateISO:', pickedUpDateISO);
+        return null;
+    }
+    pickedUpTimestamp = Timestamp.fromDate(pickedUpDateObj);
   } catch (error) {
     console.error('getChecklistForCurrentPossession: Erro ao converter pickedUpDateISO para Timestamp:', error);
     return null;
@@ -249,4 +271,3 @@ export async function getWeeklyChecklistsByOperator(
     throw error; 
   }
 }
-

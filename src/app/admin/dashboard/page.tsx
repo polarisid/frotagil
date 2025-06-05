@@ -77,6 +77,9 @@ export default function AdminDashboardPage() {
       if (maint.status !== 'planned' && maint.status !== 'in_progress') return false;
 
       const vehicle = vehicles?.find(v => v.id === maint.vehicleId);
+      // If vehicle is inactive, do not show its planned/in_progress maintenances in this "attention" list
+      if (vehicle?.status === 'inactive') return false;
+
       // If vehicle data is not available yet, or vehicle not found, we can't check KM.
       // Decide if you want to include it based on date only, or exclude. For now, exclude if KM check is crucial.
       // For this logic, if KM is part of the check, vehicle must exist.

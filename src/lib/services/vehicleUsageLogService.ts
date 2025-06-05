@@ -2,7 +2,7 @@
 'use server';
 
 import { db } from '@/lib/firebase';
-import type { VehicleUsageLog } from '@/lib/types';
+import type { VehicleUsageLog, Checklist } from '@/lib/types';
 import {
   collection,
   addDoc,
@@ -18,6 +18,7 @@ import {
 import { differenceInMinutes } from 'date-fns';
 
 const vehicleUsageLogsCollection = collection(db, 'vehicleUsageLogs');
+const checklistsCollection = collection(db, 'checklists'); // Added for querying checklists
 
 export async function createVehicleUsageLog(
   vehicleId: string,
@@ -28,7 +29,7 @@ export async function createVehicleUsageLog(
 ): Promise<string> {
   const pickedUpTimestamp = new Date();
   
-  const logEntry: Omit<VehicleUsageLog, 'id' | 'returnedTimestamp' | 'durationMinutes' | 'finalMileage' | 'kmDriven'> = {
+  const logEntry: Omit<VehicleUsageLog, 'id' | 'returnedTimestamp' | 'durationMinutes' | 'finalMileage' | 'kmDriven' | 'routeDescription'> = {
     vehicleId,
     vehiclePlate,
     operatorId,
@@ -49,7 +50,7 @@ export async function completeVehicleUsageLog(
   operatorId: string,
   finalMileage: number // New KM reading at the time of return
 ): Promise<void> {
-  const q = query(
+  const qLog = query(
     vehicleUsageLogsCollection,
     where('vehicleId', '==', vehicleId),
     where('operatorId', '==', operatorId),
@@ -58,26 +59,61 @@ export async function completeVehicleUsageLog(
     limit(1)
   );
 
-  const snapshot = await getDocs(q);
-  if (snapshot.empty) {
+  const logSnapshot = await getDocs(qLog);
+  if (logSnapshot.empty) {
     console.warn(`No active usage log found for vehicle ${vehicleId} and operator ${operatorId} to complete.`);
     return;
   }
 
-  const logDoc = snapshot.docs[0];
+  const logDoc = logSnapshot.docs[0];
   const logData = logDoc.data() as Omit<VehicleUsageLog, 'id' | 'pickedUpTimestamp'> & { pickedUpTimestamp: Timestamp, initialMileage: number };
   
   const returnedTimestamp = new Date();
+  const returnedTimestampFs = Timestamp.fromDate(returnedTimestamp);
   let durationMinutes = 0;
   let kmDriven: number | undefined = undefined;
+  let routeDescriptionFromChecklist: string | undefined = undefined;
 
   if (logData.pickedUpTimestamp instanceof Timestamp) {
     durationMinutes = differenceInMinutes(returnedTimestamp, logData.pickedUpTimestamp.toDate());
+
+    // Query for the checklist
+    const qChecklist = query(
+      checklistsCollection,
+      where('vehicleId', '==', vehicleId),
+      where('operatorId', '==', operatorId),
+      where('date', '>=', logData.pickedUpTimestamp),
+      where('date', '<=', returnedTimestampFs),
+      orderBy('date', 'desc'),
+      limit(1)
+    );
+    const checklistSnapshot = await getDocs(qChecklist);
+    if (!checklistSnapshot.empty) {
+      const checklistData = checklistSnapshot.docs[0].data() as Checklist;
+      routeDescriptionFromChecklist = checklistData.routeDescription;
+    }
   } else if (typeof logData.pickedUpTimestamp === 'string') { 
-     durationMinutes = differenceInMinutes(returnedTimestamp, new Date(logData.pickedUpTimestamp));
+     // This case should be less common now that we store Timestamps, but keep for safety
+     const pickedUpDateObj = new Date(logData.pickedUpTimestamp);
+     durationMinutes = differenceInMinutes(returnedTimestamp, pickedUpDateObj);
+
+     const qChecklist = query(
+        checklistsCollection,
+        where('vehicleId', '==', vehicleId),
+        where('operatorId', '==', operatorId),
+        where('date', '>=', Timestamp.fromDate(pickedUpDateObj)),
+        where('date', '<=', returnedTimestampFs),
+        orderBy('date', 'desc'),
+        limit(1)
+      );
+      const checklistSnapshot = await getDocs(qChecklist);
+      if (!checklistSnapshot.empty) {
+        const checklistData = checklistSnapshot.docs[0].data() as Checklist;
+        routeDescriptionFromChecklist = checklistData.routeDescription;
+      }
   }
 
-  // initialMileage is now guaranteed to be a number
+
   if (typeof finalMileage === 'number') {
     if (finalMileage >= logData.initialMileage) {
       kmDriven = finalMileage - logData.initialMileage;
@@ -87,12 +123,21 @@ export async function completeVehicleUsageLog(
     }
   }
 
-  await updateDoc(doc(db, 'vehicleUsageLogs', logDoc.id), {
-    returnedTimestamp: Timestamp.fromDate(returnedTimestamp),
+  const updateData: Partial<VehicleUsageLog> = {
+    returnedTimestamp: returnedTimestamp.toISOString(),
     durationMinutes,
     finalMileage,
     kmDriven,
     status: 'completed',
+  };
+
+  if (routeDescriptionFromChecklist) {
+    updateData.routeDescription = routeDescriptionFromChecklist;
+  }
+
+  await updateDoc(doc(db, 'vehicleUsageLogs', logDoc.id), {
+    ...updateData,
+    returnedTimestamp: returnedTimestampFs, // Store as Firestore Timestamp
   });
 }
 
@@ -135,6 +180,7 @@ export async function getVehicleUsageLogs(filters: {
       ...data,
       pickedUpTimestamp: data.pickedUpTimestamp instanceof Timestamp ? data.pickedUpTimestamp.toDate().toISOString() : data.pickedUpTimestamp,
       returnedTimestamp: data.returnedTimestamp instanceof Timestamp ? data.returnedTimestamp.toDate().toISOString() : (data.returnedTimestamp || null),
+      routeDescription: data.routeDescription || undefined, // Ensure routeDescription is included
     } as VehicleUsageLog;
   });
 }
@@ -163,6 +209,7 @@ export async function getUsageLogsForPeriod(startDate: Date, endDate: Date, stat
       ...data,
       pickedUpTimestamp: data.pickedUpTimestamp instanceof Timestamp ? data.pickedUpTimestamp.toDate().toISOString() : data.pickedUpTimestamp,
       returnedTimestamp: data.returnedTimestamp instanceof Timestamp ? data.returnedTimestamp.toDate().toISOString() : (data.returnedTimestamp || null),
+      routeDescription: data.routeDescription || undefined,
     } as VehicleUsageLog;
   });
 }
@@ -252,6 +299,8 @@ export async function getActiveUsageLogForVehicleAndOperator(vehicleId: string, 
         id: snapshot.docs[0].id,
         ...data,
         pickedUpTimestamp: data.pickedUpTimestamp instanceof Timestamp ? data.pickedUpTimestamp.toDate().toISOString() : data.pickedUpTimestamp,
+        routeDescription: data.routeDescription || undefined,
         // returnedTimestamp will be null or undefined for active logs
     } as VehicleUsageLog;
 }
+

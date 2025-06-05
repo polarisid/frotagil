@@ -29,6 +29,7 @@ export interface Checklist {
   observations: string;
   signature: string;
   mileage?: number;
+  routeDescription?: string; 
 }
 
 export interface User {
@@ -92,6 +93,7 @@ export interface VehicleUsageLog {
   initialMileage: number; // KM at pickup, now mandatory
   finalMileage?: number;   // KM at return
   kmDriven?: number;       // Calculated: finalMileage - initialMileage
+  routeDescription?: string; // Novo campo
 }
 
 // New type for managing checklist item definitions
