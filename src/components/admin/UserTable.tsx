@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
@@ -18,13 +18,25 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
-import { Edit3Icon, MoreHorizontalIcon, UserCogIcon, UserCheck2Icon, UserX2Icon } from 'lucide-react';
+import { Edit3Icon, MoreHorizontalIcon, UserCogIcon, UserCheck2Icon, UserX2Icon, KeyIcon, MailWarningIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { updateUser } from '@/lib/services/userService'; // Using updateUser to change status
+import { updateUser, sendPasswordResetEmailToUser } from '@/lib/services/userService'; 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useState } from 'react';
 
 interface UserTableProps {
   users: User[];
@@ -33,6 +45,8 @@ interface UserTableProps {
 export function UserTable({ users }: UserTableProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [isResetPasswordAlertOpen, setIsResetPasswordAlertOpen] = useState(false);
+  const [userToResetPassword, setUserToResetPassword] = useState<User | null>(null);
 
   const updateUserStatusMutation = useMutation<void, Error, { userId: string; status: 'active' | 'inactive' }>({
     mutationFn: ({ userId, status }) => updateUser(userId, { status }),
@@ -52,9 +66,40 @@ export function UserTable({ users }: UserTableProps) {
     },
   });
 
+  const sendPasswordResetMutation = useMutation({
+    mutationFn: (email: string) => sendPasswordResetEmailToUser(email),
+    onSuccess: (_, email) => {
+      toast({
+        title: 'Email de Redefinição Enviado',
+        description: `Um email para redefinição de senha foi enviado para ${email}.`,
+      });
+    },
+    onError: (error: Error, email) => {
+       toast({
+        variant: 'destructive',
+        title: 'Erro ao Enviar Email',
+        description: `Não foi possível enviar o email para ${email}. Detalhes: ${error.message}`,
+      });
+    }
+  });
+
+
   const handleToggleUserStatus = (userId: string, currentStatus: 'active' | 'inactive') => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
     updateUserStatusMutation.mutate({ userId, status: newStatus });
+  };
+
+  const handleRequestPasswordReset = (user: User) => {
+    setUserToResetPassword(user);
+    setIsResetPasswordAlertOpen(true);
+  };
+
+  const confirmSendPasswordReset = () => {
+    if (userToResetPassword?.email) {
+      sendPasswordResetMutation.mutate(userToResetPassword.email);
+    }
+    setIsResetPasswordAlertOpen(false);
+    setUserToResetPassword(null);
   };
 
   const roleDisplay = {
@@ -63,6 +108,7 @@ export function UserTable({ users }: UserTableProps) {
   };
 
   return (
+    <>
     <div className="overflow-hidden rounded-lg border shadow-md">
       <Table>
         <TableHeader className="bg-secondary">
@@ -111,7 +157,7 @@ export function UserTable({ users }: UserTableProps) {
               <TableCell className="text-right">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" disabled={updateUserStatusMutation.isLoading}>
+                    <Button variant="ghost" size="icon" disabled={updateUserStatusMutation.isLoading || sendPasswordResetMutation.isPending}>
                       <MoreHorizontalIcon className="h-4 w-4" />
                       <span className="sr-only">Ações</span>
                     </Button>
@@ -123,6 +169,13 @@ export function UserTable({ users }: UserTableProps) {
                         <Edit3Icon className="mr-2 h-4 w-4" /> Editar
                       </Link>
                     </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => handleRequestPasswordReset(user)}
+                      className="text-orange-600 focus:text-orange-700 focus:bg-orange-100/50"
+                    >
+                      <KeyIcon className="mr-2 h-4 w-4" /> Enviar Redefinição de Senha
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     {status === 'active' ? (
                         <DropdownMenuItem
                         onClick={() => handleToggleUserStatus(user.id, 'active')}
@@ -149,5 +202,37 @@ export function UserTable({ users }: UserTableProps) {
         </TableBody>
       </Table>
     </div>
+
+    <AlertDialog open={isResetPasswordAlertOpen} onOpenChange={(isOpen) => {
+        setIsResetPasswordAlertOpen(isOpen);
+        if (!isOpen) setUserToResetPassword(null);
+    }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center">
+              <MailWarningIcon className="mr-2 h-5 w-5 text-orange-500" />
+              Confirmar Envio de Email de Redefinição
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Um email para redefinição de senha será enviado para 
+              <span className="font-semibold"> {userToResetPassword?.email}</span>. 
+              O usuário precisará seguir as instruções no email para criar uma nova senha.
+              <br/><br/>
+              Deseja continuar?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmSendPasswordReset}
+              disabled={sendPasswordResetMutation.isPending}
+              className={cn(buttonVariants({variant: 'default'}), "bg-accent hover:bg-accent/90 text-accent-foreground")}
+            >
+              {sendPasswordResetMutation.isPending ? "Enviando..." : "Enviar Email de Redefinição"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

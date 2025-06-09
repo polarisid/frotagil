@@ -1,5 +1,5 @@
 
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
 import type { User } from '@/lib/types';
 import {
   collection,
@@ -13,6 +13,7 @@ import {
   where,
   setDoc
 } from 'firebase/firestore';
+import { sendPasswordResetEmail } from 'firebase/auth';
 
 const usersCollection = collection(db, 'users');
 
@@ -66,4 +67,11 @@ export async function deleteUser(id: string): Promise<void> {
   // Instead of deleting, consider marking as inactive for data integrity
   // await deleteDoc(doc(db, 'users', id));
   await updateDoc(doc(db, 'users', id), { status: 'inactive' });
+}
+
+export async function sendPasswordResetEmailToUser(email: string): Promise<void> {
+  if (!auth) {
+    throw new Error("Firebase Auth não está inicializado.");
+  }
+  await sendPasswordResetEmail(auth, email);
 }

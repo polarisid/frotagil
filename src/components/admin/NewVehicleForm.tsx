@@ -84,7 +84,7 @@ export function NewVehicleForm({ onFormSubmitSuccess }: NewVehicleFormProps) {
     },
   });
 
-  const addVehicleMutation = useMutation<Vehicle, Error, Omit<Vehicle, 'id'>>({
+  const addVehicleMutation = useMutation<Vehicle, Error, Omit<Vehicle, 'id' | 'initialMileageSystem'>>({
     mutationFn: addVehicle,
     onSuccess: (data) => {
       toast({
@@ -108,13 +108,15 @@ export function NewVehicleForm({ onFormSubmitSuccess }: NewVehicleFormProps) {
   });
 
   function onSubmit(values: NewVehicleFormValues) {
+    const currentMileage = values.mileage === '' || values.mileage === undefined || values.mileage === null ? undefined : Number(values.mileage);
     const vehicleDataToSubmit: Omit<Vehicle, 'id'> = {
       ...values,
       plate: values.plate.toUpperCase(),
-      year: Number(values.year), // Zod preprocess handles conversion to number
+      year: Number(values.year), 
       acquisitionDate: format(values.acquisitionDate, 'yyyy-MM-dd'),
       assignedOperatorId: null,
-      mileage: values.mileage === '' || values.mileage === undefined || values.mileage === null ? undefined : Number(values.mileage), // Zod preprocess handles this
+      mileage: currentMileage,
+      initialMileageSystem: currentMileage, // Save mileage as initialMileageSystem as well
       imageUrl: values.imageUrl || `https://placehold.co/300x200.png`,
     };
     addVehicleMutation.mutate(vehicleDataToSubmit);

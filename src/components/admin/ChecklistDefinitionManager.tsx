@@ -44,7 +44,7 @@ export function ChecklistDefinitionManager() {
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false);
 
   const { data: definitions, isLoading, error } = useQuery<ChecklistItemDefinition[], Error>({
-    queryKey: ['checklistItemDefinitions'],
+    queryKey: ['checklistItemDefinitions', false], // Key for fetching all items
     queryFn: () => getChecklistItemDefinitions(false), // Fetch all items, including inactive
   });
 
@@ -95,7 +95,7 @@ export function ChecklistDefinitionManager() {
   const deleteMutation = useMutation({
     mutationFn: deleteChecklistItemDefinition,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['checklistItemDefinitions'] });
+      queryClient.invalidateQueries({ queryKey: ['checklistItemDefinitions'] }); // This should cover all queries starting with this key
       toast({ title: 'Item Excluído', description: 'Item de checklist excluído permanentemente.' });
     },
     onError: (error: Error) => {
@@ -293,3 +293,5 @@ export function ChecklistDefinitionManager() {
     </>
   );
 }
+
+    

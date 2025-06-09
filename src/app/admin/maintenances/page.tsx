@@ -1,3 +1,4 @@
+
 'use client';
 
 import { PageTitle } from '@/components/shared/PageTitle';
@@ -5,7 +6,7 @@ import { Container } from '@/components/shared/Container';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { PlusCircleIcon, SearchIcon, FilterIcon, UploadCloudIcon, FileTextIcon, ListChecksIcon, AlertTriangleIcon, CheckCircleIcon, DownloadIcon, CalendarWarningIcon } from 'lucide-react';
+import { PlusCircleIcon, SearchIcon, FilterIcon, UploadCloudIcon, FileTextIcon, ListChecksIcon, AlertTriangleIcon, CheckCircleIcon, DownloadIcon, CalendarWarningIcon, WrenchIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { MaintenanceTable } from '@/components/admin/MaintenanceTable';
 import type { Maintenance, Vehicle as VehicleType } from '@/lib/types';
@@ -404,7 +405,12 @@ export default function AdminMaintenancesPage() {
               </SelectTrigger>
               <SelectContent>
                  <SelectItem value={ALL_ITEMS_VALUE}>Todos os veículos</SelectItem>
-                {vehiclesData?.map(v => <SelectItem key={v.id} value={v.id}>{v.plate} - {v.make} {v.model}</SelectItem>)}
+                {vehiclesData?.map(v => (
+                  <SelectItem key={v.id} value={v.id}>
+                    {v.plate} - {v.make} {v.model}
+                    {v.status === 'maintenance' && <span className="ml-2 text-xs text-orange-500">(<WrenchIcon className="inline-block h-3 w-3 mr-1" />Em Manutenção)</span>}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -530,3 +536,5 @@ export default function AdminMaintenancesPage() {
     </Container>
   );
 }
+
+    

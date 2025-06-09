@@ -10,6 +10,7 @@ export interface Vehicle {
   imageUrl?: string;
   assignedOperatorId?: string | null;
   mileage?: number;
+  initialMileageSystem?: number; // KM no momento do cadastro no sistema
   pickedUpDate?: string | null;
 }
 
@@ -93,7 +94,7 @@ export interface VehicleUsageLog {
   initialMileage: number; // KM at pickup, now mandatory
   finalMileage?: number;   // KM at return
   kmDriven?: number;       // Calculated: finalMileage - initialMileage
-  routeDescription?: string; // Novo campo
+  routeDescription?: string; 
 }
 
 // New type for managing checklist item definitions

@@ -1,7 +1,7 @@
 
 'use client';
 
-import type { Checklist, Vehicle, ChecklistTableProps as CustomChecklistTableProps } from '@/lib/types';
+import type { Checklist, Vehicle, ChecklistTableProps as CustomChecklistTableProps, ChecklistItem } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -20,22 +20,6 @@ import jsPDF from 'jspdf';
 import { format as formatDateFn } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-
-const fullChecklistItemsDefinition: { id: string; label: string }[] = [
-  { id: "tires", label: "Pneus calibrados e em bom estado?" },
-  { id: "lights", label: "Luzes (faróis, lanternas, setas, freio) funcionando?" },
-  { id: "brakes", label: "Freios (pedal e de mão) com resposta normal?" },
-  { id: "oilLevel", label: "Nível de óleo do motor verificado e normal?" },
-  { id: "waterLevel", label: "Nível da água do radiador verificado e normal?" },
-  { id: "brakeFluid", label: "Nível do fluido de freio verificado e normal?" },
-  { id: "fireExtinguisher", label: "Extintor de incêndio válido e pressurizado?" },
-  { id: "warningTriangle", label: "Triângulo de sinalização presente e em bom estado?" },
-  { id: "jackAndWrench", label: "Macaco e chave de roda presentes e funcionais?" },
-  { id: "vehicleDocuments", label: "Documentação do veículo (CRLV) presente e válida?" },
-  { id: "interiorCleanliness", label: "Limpeza interna do veículo satisfatória?" },
-  { id: "exteriorCleanliness", label: "Limpeza externa do veículo satisfatória?" },
-];
-
 export function ChecklistTable({ checklists, vehicles, isAdminView = false }: CustomChecklistTableProps) {
   const { toast } = useToast();
 
@@ -46,18 +30,17 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
     const pageHeight = doc.internal.pageSize.getHeight();
     const leftMargin = 15;
     const rightMargin = 15;
-    const topMargin = 15; // Ajustado para dar espaço ao logo
+    const topMargin = 15;
     const bottomMargin = 20;
     const contentWidth = pageWidth - leftMargin - rightMargin;
     let yPos = topMargin;
     const lineHeight = 5; 
     const cellPadding = 2;
 
-    // Desenhar Logo
     doc.setFontSize(10);
     doc.setFont(undefined, 'bold');
     doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
-    yPos += 10; // Espaço após o logo
+    yPos += 10;
 
     doc.setFontSize(18);
     doc.setFont(undefined, 'bold');
@@ -75,7 +58,12 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
     if (checklist.mileage !== undefined) {
       doc.text(`KM Registrado: ${checklist.mileage.toLocaleString('pt-BR')} km`, leftMargin, yPos);
     }
-    yPos += 12;
+    yPos += 7;
+    if (checklist.routeDescription) {
+      doc.text(`Descrição da Rota: ${checklist.routeDescription}`, leftMargin, yPos);
+      yPos += 7;
+    }
+    yPos += 5;
 
 
     doc.setFontSize(14);
@@ -98,14 +86,8 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
     yPos += 3; 
     doc.setFont(undefined, 'normal');
 
-
-    const itemsToDisplay = fullChecklistItemsDefinition.map(defItem => {
-        const submittedItem = checklist.items.find(ci => ci.id === defItem.id);
-        return {
-            label: defItem.label,
-            value: submittedItem ? submittedItem.value : null 
-        };
-    });
+    // Use checklist.items directly which contains { id, label, value }
+    const itemsToDisplay: ChecklistItem[] = checklist.items;
 
     const drawItemRowPdf = (itemLabel: string, itemValue: boolean | null) => {
       const itemLabelLines = doc.splitTextToSize(itemLabel, itemColWidth - (cellPadding * 2));
@@ -114,7 +96,6 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
       if (yPos + rowHeight + 3 > pageHeight - bottomMargin) { 
         doc.addPage();
         yPos = topMargin;
-        // Redesenhar logo e cabeçalho da página
         doc.setFontSize(10);
         doc.setFont(undefined, 'bold');
         doc.text('FrotaÁgil', pageWidth - rightMargin, topMargin, { align: 'right' });
@@ -138,18 +119,18 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
       let statusTextWithIcon = '- N/A'; 
       doc.setFont(undefined, 'bold');
       if (itemValue === true) {
-        doc.setTextColor(0, 100, 0); // Dark Green
+        doc.setTextColor(0, 100, 0); 
         statusTextWithIcon = "✓ Sim";
       } else if (itemValue === false) {
-        doc.setTextColor(200, 0, 0); // Dark Red
+        doc.setTextColor(200, 0, 0); 
         statusTextWithIcon = "✗ Não";
       } else {
-        doc.setTextColor(105, 105, 105); // Dark Grey
+        doc.setTextColor(105, 105, 105); 
       }
       
       doc.text(statusTextWithIcon, statusColX + cellPadding, textY);
       doc.setFont(undefined, 'normal');
-      doc.setTextColor(0, 0, 0); // Reset color to black
+      doc.setTextColor(0, 0, 0); 
 
       yPos += rowHeight;
       doc.setLineWidth(0.1); 
@@ -159,7 +140,8 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
 
 
     itemsToDisplay.forEach(item => {
-      drawItemRowPdf(item.label, item.value);
+      // item.label and item.value are directly from the checklist's stored items
+      drawItemRowPdf(item.label, item.value); 
     });
     
     yPos += 5; 
@@ -290,3 +272,4 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
   );
 }
 
+    

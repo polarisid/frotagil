@@ -13,7 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { format, intervalToDuration, formatDuration } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { ClockIcon, CheckCircle2Icon, TruckIcon, RouteIcon } from 'lucide-react';
+import { ClockIcon, CheckCircle2Icon, TruckIcon, RouteIcon, TrendingUpIcon, TrendingDownIcon } from 'lucide-react';
 
 interface VehicleUsageTableProps {
   usageLogs: VehicleUsageLog[];
@@ -59,6 +59,11 @@ export function VehicleUsageTable({ usageLogs, vehicles, users }: VehicleUsageTa
   const getOperatorDisplay = (log: VehicleUsageLog) => {
     return log.operatorName || users.find(u => u.id === log.operatorId)?.name || 'Desconhecido';
   };
+
+  const formatKm = (km?: number) => {
+    if (km === undefined || km === null) return '-';
+    return `${km.toLocaleString('pt-BR')} km`;
+  };
   
   if (usageLogs.length === 0) {
     return (
@@ -78,10 +83,13 @@ export function VehicleUsageTable({ usageLogs, vehicles, users }: VehicleUsageTa
           <TableRow>
             <TableHead>Veículo</TableHead>
             <TableHead>Motorista</TableHead>
-            <TableHead>Retirada</TableHead>
-            <TableHead>Devolução</TableHead>
-            <TableHead className="hidden sm:table-cell">Duração</TableHead>
+            <TableHead className="hidden lg:table-cell">Retirada</TableHead>
+            <TableHead className="hidden lg:table-cell">Devolução</TableHead>
+            <TableHead className="hidden xl:table-cell">Duração</TableHead>
             <TableHead className="hidden md:table-cell">Rota</TableHead>
+            <TableHead className="text-right">KM Inicial</TableHead>
+            <TableHead className="text-right">KM Final</TableHead>
+            <TableHead className="text-right">KM Rodado</TableHead>
             <TableHead>Status</TableHead>
           </TableRow>
         </TableHeader>
@@ -90,12 +98,15 @@ export function VehicleUsageTable({ usageLogs, vehicles, users }: VehicleUsageTa
             <TableRow key={log.id} className="hover:bg-muted/50">
               <TableCell className="font-medium">{getVehicleDisplay(log)}</TableCell>
               <TableCell>{getOperatorDisplay(log)}</TableCell>
-              <TableCell>{formatTimestamp(log.pickedUpTimestamp)}</TableCell>
-              <TableCell>{log.status === 'completed' ? formatTimestamp(log.returnedTimestamp) : 'Em uso'}</TableCell>
-              <TableCell className="hidden sm:table-cell">{getDuration(log)}</TableCell>
+              <TableCell className="hidden lg:table-cell">{formatTimestamp(log.pickedUpTimestamp)}</TableCell>
+              <TableCell className="hidden lg:table-cell">{log.status === 'completed' ? formatTimestamp(log.returnedTimestamp) : 'Em uso'}</TableCell>
+              <TableCell className="hidden xl:table-cell">{getDuration(log)}</TableCell>
               <TableCell className="hidden md:table-cell truncate max-w-[150px]">
                 {log.routeDescription || '-'}
               </TableCell>
+              <TableCell className="text-right">{formatKm(log.initialMileage)}</TableCell>
+              <TableCell className="text-right">{log.status === 'completed' ? formatKm(log.finalMileage) : '-'}</TableCell>
+              <TableCell className="text-right">{log.status === 'completed' ? formatKm(log.kmDriven) : '-'}</TableCell>
               <TableCell>
                 {log.status === 'completed' ? (
                   <Badge variant="default" className="bg-green-500 hover:bg-green-600 text-white">
@@ -114,4 +125,3 @@ export function VehicleUsageTable({ usageLogs, vehicles, users }: VehicleUsageTa
     </div>
   );
 }
-

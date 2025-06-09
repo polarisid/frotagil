@@ -13,7 +13,7 @@ import {
   where,
   Timestamp
 } from 'firebase/firestore';
-import { completeVehicleUsageLog } from './vehicleUsageLogService'; // createVehicleUsageLog removed
+import { completeVehicleUsageLog } from './vehicleUsageLogService'; 
 import { getUserById } from './userService';
 
 const vehiclesCollection = collection(db, 'vehicles');
@@ -27,6 +27,7 @@ export async function getVehicles(): Promise<Vehicle[]> {
       ...data,
       acquisitionDate: data.acquisitionDate instanceof Timestamp ? data.acquisitionDate.toDate().toISOString().split('T')[0] : data.acquisitionDate,
       pickedUpDate: data.pickedUpDate instanceof Timestamp ? data.pickedUpDate.toDate().toISOString() : data.pickedUpDate,
+      initialMileageSystem: data.initialMileageSystem, // Make sure to return this field
     } as Vehicle;
   });
 }
@@ -41,6 +42,7 @@ export async function getVehicleById(id: string): Promise<Vehicle | null> {
       ...data,
       acquisitionDate: data.acquisitionDate instanceof Timestamp ? data.acquisitionDate.toDate().toISOString().split('T')[0] : data.acquisitionDate,
       pickedUpDate: data.pickedUpDate instanceof Timestamp ? data.pickedUpDate.toDate().toISOString() : data.pickedUpDate,
+      initialMileageSystem: data.initialMileageSystem, // Make sure to return this field
     } as Vehicle;
   }
   return null;
@@ -57,14 +59,18 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id'>): Promise<Vehi
     ...vehicleData,
     plate: vehicleData.plate.toUpperCase(),
     acquisitionDate: vehicleData.acquisitionDate ? Timestamp.fromDate(new Date(vehicleData.acquisitionDate)) : null,
-    pickedUpDate: null, // Initialize pickedUpDate as null
+    pickedUpDate: null, 
+    // initialMileageSystem is already part of vehicleData if passed from the form
+    initialMileageSystem: vehicleData.mileage, // Explicitly set based on form's mileage
   };
 
   const docRef = await addDoc(vehiclesCollection, dataToSave);
+  const savedData = (await getDoc(docRef)).data(); // Get the actual saved data
   return { 
     id: docRef.id, 
-    ...vehicleData,
-    acquisitionDate: vehicleData.acquisitionDate
+    ...vehicleData, // Use original vehicleData for response structure
+    acquisitionDate: vehicleData.acquisitionDate,
+    initialMileageSystem: savedData?.initialMileageSystem, // Use the value from Firestore
   };
 }
 
@@ -76,13 +82,16 @@ export async function updateVehicle(id: string, vehicleData: Partial<Omit<Vehicl
     dataToUpdate.acquisitionDate = Timestamp.fromDate(new Date(vehicleData.acquisitionDate));
   }
   
-  // Handle pickedUpDate: allow setting to null or a new Timestamp
   if (vehicleData.hasOwnProperty('pickedUpDate')) {
     if (vehicleData.pickedUpDate === null) {
       dataToUpdate.pickedUpDate = null;
     } else if (typeof vehicleData.pickedUpDate === 'string') {
       dataToUpdate.pickedUpDate = Timestamp.fromDate(new Date(vehicleData.pickedUpDate));
     }
+  }
+  // initialMileageSystem should not be updated here as it's the KM at system entry
+  if (dataToUpdate.hasOwnProperty('initialMileageSystem')) {
+    delete dataToUpdate.initialMileageSystem;
   }
 
 
@@ -111,7 +120,6 @@ export async function pickUpVehicle(vehicleId: string, operatorId: string): Prom
   const operatorVehiclesSnap = await getDocs(operatorVehiclesQuery);
   if (!operatorVehiclesSnap.empty) throw new Error('Operador já possui um veículo atribuído.');
 
-  // No longer creating VehicleUsageLog here. It will be created upon checklist submission.
   await updateDoc(vehicleRef, { 
     assignedOperatorId: operatorId,
     pickedUpDate: Timestamp.fromDate(new Date())
@@ -138,8 +146,6 @@ export async function returnVehicle(vehicleId: string, operatorId: string, newMi
   
   await updateDoc(vehicleRef, updates);
 
-  // Attempt to complete the active usage log.
-  // If no active log (e.g., checklist wasn't submitted), this will do nothing gracefully.
   await completeVehicleUsageLog(vehicleId, operatorId, newMileage);
 }
 

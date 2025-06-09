@@ -10,10 +10,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Button, buttonVariants } from '@/components/ui/button'; // Added buttonVariants import
+import { Button, buttonVariants } from '@/components/ui/button'; 
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Edit3Icon, Trash2Icon, MoreHorizontalIcon, EyeIcon, WrenchIcon } from 'lucide-react';
+import { Edit3Icon, Trash2Icon, MoreHorizontalIcon, EyeIcon, WrenchIcon,TrendingUpIcon, TrendingDownIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
@@ -28,7 +28,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { useState } from 'react';
 
@@ -74,6 +73,11 @@ export function VehicleTable({ vehicles }: VehicleTableProps) {
     inactive: 'border-gray-500 text-gray-700 bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700',
   };
 
+  const formatKm = (km?: number) => {
+    if (km === undefined || km === null) return 'N/A';
+    return `${km.toLocaleString('pt-BR')} km`;
+  };
+
 
   return (
     <>
@@ -86,6 +90,8 @@ export function VehicleTable({ vehicles }: VehicleTableProps) {
             <TableHead>Marca</TableHead>
             <TableHead className="hidden md:table-cell">Ano</TableHead>
             <TableHead className="hidden lg:table-cell">Aquisição</TableHead>
+            <TableHead className="hidden xl:table-cell">KM Inicial (Sistema)</TableHead>
+            <TableHead>KM Atual</TableHead>
             <TableHead>Status</TableHead>
             <TableHead className="text-right">Ações</TableHead>
           </TableRow>
@@ -93,7 +99,7 @@ export function VehicleTable({ vehicles }: VehicleTableProps) {
         <TableBody>
           {vehicles.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="h-24 text-center">
+              <TableCell colSpan={9} className="h-24 text-center">
                 Nenhum veículo cadastrado.
               </TableCell>
             </TableRow>
@@ -106,6 +112,14 @@ export function VehicleTable({ vehicles }: VehicleTableProps) {
               <TableCell className="hidden md:table-cell">{vehicle.year}</TableCell>
               <TableCell className="hidden lg:table-cell">
                 {vehicle.acquisitionDate ? new Date(vehicle.acquisitionDate + 'T00:00:00').toLocaleDateString('pt-BR') : 'N/A'}
+              </TableCell>
+              <TableCell className="hidden xl:table-cell">
+                 <TrendingDownIcon className="mr-1 h-3 w-3 inline-block text-muted-foreground" />
+                {formatKm(vehicle.initialMileageSystem)}
+              </TableCell>
+              <TableCell>
+                <TrendingUpIcon className="mr-1 h-3 w-3 inline-block text-muted-foreground" />
+                {formatKm(vehicle.mileage)}
               </TableCell>
               <TableCell>
                 <Badge variant="outline" className={cn("capitalize", statusStyles[vehicle.status])}>
@@ -122,10 +136,6 @@ export function VehicleTable({ vehicles }: VehicleTableProps) {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuLabel>Opções</DropdownMenuLabel>
-                    {/* Placeholder for view details, implement if needed */}
-                    {/* <DropdownMenuItem onClick={() => toast({title: "Visualizar (UI)", description:`Veículo ${vehicle.plate}`})}>
-                      <EyeIcon className="mr-2 h-4 w-4" /> Visualizar Detalhes
-                    </DropdownMenuItem> */}
                     <DropdownMenuItem asChild>
                       <Link href={`/admin/vehicles/edit/${vehicle.id}`}>
                         <Edit3Icon className="mr-2 h-4 w-4" /> Editar
@@ -165,7 +175,7 @@ export function VehicleTable({ vehicles }: VehicleTableProps) {
             <AlertDialogCancel onClick={() => setVehicleToDelete(null)}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
-              className={cn(buttonVariants({ variant: "destructive" }))} // Ensure cn is used if other classes might be added later
+              className={cn(buttonVariants({ variant: "destructive" }))} 
               disabled={deleteMutation.isPending && vehicleToDelete?.id === vehicleToDelete?.id}
             >
               {(deleteMutation.isPending && vehicleToDelete?.id === vehicleToDelete?.id) ? "Excluindo..." : "Excluir"}
@@ -176,3 +186,4 @@ export function VehicleTable({ vehicles }: VehicleTableProps) {
     </>
   );
 }
+
