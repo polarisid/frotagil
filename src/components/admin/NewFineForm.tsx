@@ -84,13 +84,13 @@ export function NewFineForm({ operators, vehicles, onFormSubmitSuccess }: NewFin
   const selectedVehicleId = form.watch('vehicleId');
   const infractionDate = form.watch('date');
 
-  const fetchAndSetOperator = useCallback(async (vehicleIdParam: string, dateParam: Date) => {
+  const fetchAndSetOperator = useCallback(async (vehicleIdParam?: string, dateParam?: Date) => {
     if (!vehicleIdParam || !dateParam) {
-      // If vehicle or date is not set, don't attempt to fetch.
-      // Clearing of operatorId should happen if a fetch *for a valid combo* fails or returns null.
+      if (form.getValues('operatorId') !== undefined) {
+        // form.setValue('operatorId', undefined, { shouldValidate: true });
+      }
       return;
     }
-
     setIsFetchingOperator(true);
     try {
       const operatorId = await getOperatorForVehicleAtTime(vehicleIdParam, dateParam.toISOString());
@@ -99,17 +99,17 @@ export function NewFineForm({ operators, vehicles, onFormSubmitSuccess }: NewFin
       if (operatorId) {
         const operatorExistsInList = operators.some(op => op.id === operatorId);
         if (operatorExistsInList) {
-          if (currentFormOperatorId !== operatorId) { // Only update and toast if different
+          if (currentFormOperatorId !== operatorId) {
             form.setValue('operatorId', operatorId, { shouldValidate: true });
             toast({
               title: 'Operador Identificado',
-              description: `O operador ${operators.find(op => op.id === operatorId)?.name || 'desconhecido'} foi selecionado com base no histórico de uso.`,
+              description: `O operador ${operators.find(op => op.id === operatorId)?.name || 'desconhecido'} foi selecionado automaticamente.`,
               className: "bg-green-100 dark:bg-green-900",
             });
           }
         } else {
           console.warn(`Operador ${operatorId} encontrado no histórico, mas não está na lista de operadores ativos/disponíveis.`);
-          if (currentFormOperatorId !== undefined) { // Clear if a previous (possibly auto-filled) operator was there
+          if (currentFormOperatorId !== undefined) {
             form.setValue('operatorId', undefined, { shouldValidate: true });
             toast({
               title: 'Operador do Histórico Indisponível',
@@ -118,13 +118,11 @@ export function NewFineForm({ operators, vehicles, onFormSubmitSuccess }: NewFin
           }
         }
       } else {
-        // No operator found for this specific vehicle/date combination.
-        // If there was a value (auto-filled or manually set for a *different* combo), clear it.
         if (currentFormOperatorId !== undefined) {
           form.setValue('operatorId', undefined, { shouldValidate: true });
           toast({
               title: 'Operador Não Encontrado',
-              description: `Nenhum operador associado a este veículo/data. Selecione manualmente.`,
+              description: `Nenhum operador associado a este veículo/data no histórico. Selecione manualmente.`,
           });
         }
       }
@@ -135,22 +133,25 @@ export function NewFineForm({ operators, vehicles, onFormSubmitSuccess }: NewFin
         title: "Erro ao Buscar Operador",
         description: "Não foi possível identificar o operador automaticamente.",
       });
-      // If an error occurs during fetch, and an operator was previously set, clear it.
       if (form.getValues('operatorId') !== undefined) {
           form.setValue('operatorId', undefined, { shouldValidate: true });
       }
     } finally {
       setIsFetchingOperator(false);
     }
-  }, [form, toast, operators, setIsFetchingOperator]);
+  }, [form, toast, operators]);
 
 
   useEffect(() => {
     if (selectedVehicleId && infractionDate) {
       fetchAndSetOperator(selectedVehicleId, infractionDate);
+    } else if (!selectedVehicleId || !infractionDate) {
+      // If vehicle or date is cleared, clear operator
+      if (form.getValues('operatorId') !== undefined) {
+         // form.setValue('operatorId', undefined, { shouldValidate: true });
+      }
     }
-    // No explicit clearing here; fetchAndSetOperator handles clearing if the new combo is invalid or returns no operator.
-  }, [selectedVehicleId, infractionDate, fetchAndSetOperator]);
+  }, [selectedVehicleId, infractionDate, fetchAndSetOperator, form]);
 
   const addFineMutation = useMutation({
     mutationFn: addFineService,
@@ -185,7 +186,7 @@ export function NewFineForm({ operators, vehicles, onFormSubmitSuccess }: NewFin
       ...values,
       operatorName: selectedOperator.name,
       vehiclePlate: selectedVehicle.plate,
-      date: format(values.date, 'yyyy-MM-dd HH:mm:ss'),
+      date: values.date.toISOString(), // Changed to toISOString()
       dueDate: format(values.dueDate, 'yyyy-MM-dd'),
       amount: values.amount,
     };

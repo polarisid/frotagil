@@ -69,8 +69,10 @@ export function EditFineForm({ fine, operators, vehicles, onFormSubmitSuccess }:
     if (!dateInput) return undefined;
     if (dateInput instanceof Date && isDateValid(dateInput)) return dateInput;
     if (typeof dateInput === 'string') {
+        // Try parsing as ISO (which is what Firestore date strings become after .toISOString())
         const date = parseISO(dateInput);
-        return isDateValid(date) ? date : undefined;
+        if (isDateValid(date)) return date;
+        // Fallback for other string formats if necessary, though ISO should be standard from Firestore
     }
     return undefined;
   };
@@ -136,7 +138,7 @@ export function EditFineForm({ fine, operators, vehicles, onFormSubmitSuccess }:
 
     const fineDataToUpdate: Partial<Omit<Fine, 'id' | 'createdAt' | 'operatorName' | 'vehiclePlate'>> = {
       ...editableValues,
-      date: format(values.date, 'yyyy-MM-dd HH:mm:ss'),
+      date: values.date.toISOString(), // Changed to toISOString()
       dueDate: format(values.dueDate, 'yyyy-MM-dd'),
       amount: Number(values.amount),
     };
