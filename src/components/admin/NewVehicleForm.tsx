@@ -84,7 +84,7 @@ export function NewVehicleForm({ onFormSubmitSuccess }: NewVehicleFormProps) {
     },
   });
 
-  const addVehicleMutation = useMutation<Vehicle, Error, Omit<Vehicle, 'id' | 'initialMileageSystem'>>({
+  const addVehicleMutation = useMutation<Vehicle, Error, Omit<Vehicle, 'id'>>({
     mutationFn: addVehicle,
     onSuccess: (data) => {
       toast({
@@ -93,7 +93,16 @@ export function NewVehicleForm({ onFormSubmitSuccess }: NewVehicleFormProps) {
       });
       queryClient.invalidateQueries({ queryKey: ['vehicles'] });
       onFormSubmitSuccess();
-      form.reset();
+      form.reset({
+        plate: '',
+        model: '',
+        make: '',
+        year: '' as any,
+        acquisitionDate: new Date(),
+        status: 'active',
+        imageUrl: `https://placehold.co/300x200.png`,
+        mileage: '' as any,
+      });
     },
     onError: (error) => {
       toast({
@@ -116,8 +125,9 @@ export function NewVehicleForm({ onFormSubmitSuccess }: NewVehicleFormProps) {
       acquisitionDate: format(values.acquisitionDate, 'yyyy-MM-dd'),
       assignedOperatorId: null,
       mileage: currentMileage,
-      initialMileageSystem: currentMileage, // Save mileage as initialMileageSystem as well
+      initialMileageSystem: currentMileage, // Garante que a KM inicial do sistema é a mesma que a KM atual no cadastro
       imageUrl: values.imageUrl || `https://placehold.co/300x200.png`,
+      pickedUpDate: null, // Explicitly set pickedUpDate to null for new vehicles
     };
     addVehicleMutation.mutate(vehicleDataToSubmit);
   }
@@ -294,5 +304,4 @@ export function NewVehicleForm({ onFormSubmitSuccess }: NewVehicleFormProps) {
     </Card>
   );
 }
-
     

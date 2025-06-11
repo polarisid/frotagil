@@ -11,21 +11,21 @@ import {
   query,
   where,
   getDocs,
-  Timestamp,
+  Timestamp, // Certifique-se de que Timestamp está importado
   orderBy,
   limit,
 } from 'firebase/firestore';
 import { differenceInMinutes } from 'date-fns';
 
 const vehicleUsageLogsCollection = collection(db, 'vehicleUsageLogs');
-const checklistsCollection = collection(db, 'checklists'); // Added for querying checklists
+const checklistsCollection = collection(db, 'checklists');
 
 export async function createVehicleUsageLog(
   vehicleId: string,
   vehiclePlate: string,
   operatorId: string,
   operatorName: string,
-  initialMileage: number // Now a required parameter
+  initialMileage: number
 ): Promise<string> {
   const pickedUpTimestamp = new Date();
   
@@ -36,11 +36,11 @@ export async function createVehicleUsageLog(
     operatorName,
     pickedUpTimestamp: pickedUpTimestamp.toISOString(),
     status: 'active',
-    initialMileage, // Use the provided initialMileage
+    initialMileage,
   };
   const docRef = await addDoc(vehicleUsageLogsCollection, {
     ...logEntry,
-    pickedUpTimestamp: Timestamp.fromDate(pickedUpTimestamp), // Store as Firestore Timestamp
+    pickedUpTimestamp: Timestamp.fromDate(pickedUpTimestamp),
   });
   return docRef.id;
 }
@@ -48,7 +48,7 @@ export async function createVehicleUsageLog(
 export async function completeVehicleUsageLog(
   vehicleId: string,
   operatorId: string,
-  finalMileage: number // New KM reading at the time of return
+  finalMileage: number
 ): Promise<void> {
   const qLog = query(
     vehicleUsageLogsCollection,
@@ -77,7 +77,6 @@ export async function completeVehicleUsageLog(
   if (logData.pickedUpTimestamp instanceof Timestamp) {
     durationMinutes = differenceInMinutes(returnedTimestamp, logData.pickedUpTimestamp.toDate());
 
-    // Query for the checklist
     const qChecklist = query(
       checklistsCollection,
       where('vehicleId', '==', vehicleId),
@@ -93,7 +92,6 @@ export async function completeVehicleUsageLog(
       routeDescriptionFromChecklist = checklistData.routeDescription;
     }
   } else if (typeof logData.pickedUpTimestamp === 'string') { 
-     // This case should be less common now that we store Timestamps, but keep for safety
      const pickedUpDateObj = new Date(logData.pickedUpTimestamp);
      durationMinutes = differenceInMinutes(returnedTimestamp, pickedUpDateObj);
 
@@ -112,7 +110,6 @@ export async function completeVehicleUsageLog(
         routeDescriptionFromChecklist = checklistData.routeDescription;
       }
   }
-
 
   if (typeof finalMileage === 'number') {
     if (finalMileage >= logData.initialMileage) {
@@ -137,13 +134,13 @@ export async function completeVehicleUsageLog(
 
   await updateDoc(doc(db, 'vehicleUsageLogs', logDoc.id), {
     ...updateData,
-    returnedTimestamp: returnedTimestampFs, // Store as Firestore Timestamp
+    returnedTimestamp: returnedTimestampFs,
   });
 }
 
 export async function getVehicleUsageLogs(filters: {
-  startDate?: string; // ISO Date string yyyy-MM-dd
-  endDate?: string;   // ISO Date string yyyy-MM-dd
+  startDate?: string;
+  endDate?: string;
   vehicleId?: string;
   operatorId?: string;
   status?: 'active' | 'completed';
@@ -158,7 +155,6 @@ export async function getVehicleUsageLogs(filters: {
     const end = Timestamp.fromDate(new Date(filters.endDate + "T23:59:59Z"));
     q = query(q, where('pickedUpTimestamp', '<=', end));
   }
-
   if (filters.vehicleId) {
     q = query(q, where('vehicleId', '==', filters.vehicleId));
   }
@@ -171,7 +167,6 @@ export async function getVehicleUsageLogs(filters: {
   
   q = query(q, orderBy('pickedUpTimestamp', 'desc'));
 
-
   const snapshot = await getDocs(q);
   return snapshot.docs.map(docSnap => {
     const data = docSnap.data();
@@ -180,7 +175,7 @@ export async function getVehicleUsageLogs(filters: {
       ...data,
       pickedUpTimestamp: data.pickedUpTimestamp instanceof Timestamp ? data.pickedUpTimestamp.toDate().toISOString() : data.pickedUpTimestamp,
       returnedTimestamp: data.returnedTimestamp instanceof Timestamp ? data.returnedTimestamp.toDate().toISOString() : (data.returnedTimestamp || null),
-      routeDescription: data.routeDescription || undefined, // Ensure routeDescription is included
+      routeDescription: data.routeDescription || undefined,
     } as VehicleUsageLog;
   });
 }
@@ -214,9 +209,8 @@ export async function getUsageLogsForPeriod(startDate: Date, endDate: Date, stat
   });
 }
 
-
 interface DailyMileage {
-  date: string; // YYYY-MM-DD
+  date: string;
   km: number;
 }
 
@@ -235,7 +229,7 @@ export async function getWeeklyMileageByOperator(startDate: Date, endDate: Date)
     vehicleUsageLogsCollection,
     where('pickedUpTimestamp', '>=', startTimestamp),
     where('pickedUpTimestamp', '<=', endTimestamp),
-    where('status', '==', 'completed') // Only consider completed logs for KM driven
+    where('status', '==', 'completed')
   );
 
   const snapshot = await getDocs(q);
@@ -255,8 +249,7 @@ export async function getWeeklyMileageByOperator(startDate: Date, endDate: Date)
     const kmDriven = log.kmDriven || 0;
     operatorMileageMap[log.operatorId].totalWeeklyKm += kmDriven;
 
-    // Add to daily breakdown
-    if (log.pickedUpTimestamp) { // Ensure timestamp exists
+    if (log.pickedUpTimestamp) {
       const logDate = new Date(log.pickedUpTimestamp);
       const dateString = logDate.toISOString().split('T')[0];
       const dailyEntry = operatorMileageMap[log.operatorId].dailyBreakdown.find(d => d.date === dateString);
@@ -268,18 +261,13 @@ export async function getWeeklyMileageByOperator(startDate: Date, endDate: Date)
     }
   });
 
-  // Sort daily breakdown by date
   Object.values(operatorMileageMap).forEach(operator => {
     operator.dailyBreakdown.sort((a, b) => a.date.localeCompare(b.date));
   });
 
-  // Convert map to array
-  const result = Object.values(operatorMileageMap);
-
-  return result;
+  return Object.values(operatorMileageMap);
 }
 
-// Function to check if an active usage log exists for a vehicle and operator
 export async function getActiveUsageLogForVehicleAndOperator(vehicleId: string, operatorId: string): Promise<VehicleUsageLog | null> {
     const q = query(
         vehicleUsageLogsCollection,
@@ -300,7 +288,101 @@ export async function getActiveUsageLogForVehicleAndOperator(vehicleId: string, 
         ...data,
         pickedUpTimestamp: data.pickedUpTimestamp instanceof Timestamp ? data.pickedUpTimestamp.toDate().toISOString() : data.pickedUpTimestamp,
         routeDescription: data.routeDescription || undefined,
-        // returnedTimestamp will be null or undefined for active logs
     } as VehicleUsageLog;
 }
 
+/**
+ * Finds the operatorId for a given vehicle at a specific timestamp.
+ * IMPORTANT: This query requires composite indexes in Firestore.
+ * Check Firebase console if errors occur.
+ * Example index needed: Collection: vehicleUsageLogs, Fields: vehicleId (ASC), status (ASC), pickedUpTimestamp (DESC)
+ * Another for completed: vehicleId (ASC), status (ASC), pickedUpTimestamp (DESC), returnedTimestamp (ASC)
+ */
+export async function getOperatorForVehicleAtTime(vehicleId: string, infractionTimestampISO: string): Promise<string | null> {
+  if (!vehicleId || !infractionTimestampISO) {
+    console.log('[FrotaAgil-Debug][getOperatorForVehicleAtTime] Early exit: Missing vehicleId or infractionTimestampISO.');
+    return null;
+  }
+
+  let infractionDateObj;
+  try {
+    infractionDateObj = new Date(infractionTimestampISO);
+    if (isNaN(infractionDateObj.getTime())) {
+      throw new Error('Invalid date string');
+    }
+  } catch (e) {
+    console.error('[FrotaAgil-Debug][getOperatorForVehicleAtTime] Error parsing infractionTimestampISO:', infractionTimestampISO, e);
+    return null;
+  }
+  
+  const infractionTimeFs = Timestamp.fromDate(infractionDateObj);
+  console.log(`[FrotaAgil-Debug][getOperatorForVehicleAtTime] Searching for vehicleId: "${vehicleId}" at infractionTime: ${infractionTimestampISO} (Firestore Timestamp: ${infractionTimeFs.toDate().toISOString()})`);
+
+  // Query 1: Check completed logs
+  // Find logs where pickedUpTimestamp <= infractionTimeFs
+  // Then filter in code for returnedTimestamp >= infractionTimeFs
+  const qCompleted = query(
+    vehicleUsageLogsCollection,
+    where('vehicleId', '==', vehicleId),
+    where('status', '==', 'completed'),
+    where('pickedUpTimestamp', '<=', infractionTimeFs),
+    orderBy('pickedUpTimestamp', 'desc') // Process most recent relevant pickups first
+  );
+
+  try {
+    console.log('[FrotaAgil-Debug][getOperatorForVehicleAtTime] Querying completed logs...');
+    const completedSnapshot = await getDocs(qCompleted);
+    console.log(`[FrotaAgil-Debug][getOperatorForVehicleAtTime] Found ${completedSnapshot.docs.length} potentially matching completed logs.`);
+
+    for (const docSnap of completedSnapshot.docs) {
+      const logData = docSnap.data();
+      // Ensure returnedTimestamp exists and is a Firestore Timestamp
+      if (logData.returnedTimestamp && logData.returnedTimestamp instanceof Timestamp) {
+        const returnedTimestampFs = logData.returnedTimestamp as Timestamp;
+        // Check if infraction falls within [pickedUpTimestamp, returnedTimestamp]
+        if (logData.pickedUpTimestamp <= infractionTimeFs && returnedTimestampFs >= infractionTimeFs) {
+          console.log(`[FrotaAgil-Debug][getOperatorForVehicleAtTime] Match found in COMPLETED log ${docSnap.id}. Operator: ${logData.operatorId}`);
+          return logData.operatorId as string;
+        }
+      } else {
+         console.warn(`[FrotaAgil-Debug][getOperatorForVehicleAtTime] Completed log ${docSnap.id} for vehicle ${vehicleId} is missing or has an invalid returnedTimestamp. Log data:`, JSON.stringify(logData));
+      }
+    }
+  } catch (error: any) {
+    console.error("[FrotaAgil-Debug][getOperatorForVehicleAtTime] Error querying completed logs:", error.message, error.code);
+    if (error.code === 'failed-precondition') {
+      console.error("Firestore query for completed logs failed due to a missing composite index. Please check Firebase console. Suggested index: collection 'vehicleUsageLogs', fields: vehicleId (ASC), status (ASC), pickedUpTimestamp (DESC). You might also need one including returnedTimestamp for more complex queries if this doesn't resolve.");
+    }
+    // Do not re-throw; proceed to check active logs.
+  }
+
+  // Query 2: Check active logs
+  // Find active logs where pickedUpTimestamp <= infractionTimeFs
+  const qActive = query(
+    vehicleUsageLogsCollection,
+    where('vehicleId', '==', vehicleId),
+    where('status', '==', 'active'),
+    where('pickedUpTimestamp', '<=', infractionTimeFs),
+    orderBy('pickedUpTimestamp', 'desc'), // Get the most recent active log picked up before/at infraction
+    limit(1)
+  );
+
+  try {
+    console.log('[FrotaAgil-Debug][getOperatorForVehicleAtTime] Querying active logs...');
+    const activeSnapshot = await getDocs(qActive);
+    if (!activeSnapshot.empty) {
+      const activeLogData = activeSnapshot.docs[0].data();
+      console.log(`[FrotaAgil-Debug][getOperatorForVehicleAtTime] Match found in ACTIVE log ${activeSnapshot.docs[0].id}. Operator: ${activeLogData.operatorId}`);
+      return activeLogData.operatorId as string;
+    }
+    console.log('[FrotaAgil-Debug][getOperatorForVehicleAtTime] No matching active log found.');
+  } catch (error: any) {
+    console.error("[FrotaAgil-Debug][getOperatorForVehicleAtTime] Error querying active logs:", error.message, error.code);
+    if (error.code === 'failed-precondition') {
+      console.error("Firestore query for active logs failed due to a missing composite index. Please check Firebase console. Suggested index: collection 'vehicleUsageLogs', fields: vehicleId (ASC), status (ASC), pickedUpTimestamp (DESC).");
+    }
+  }
+
+  console.log('[FrotaAgil-Debug][getOperatorForVehicleAtTime] No operator found for the given criteria after checking both completed and active logs.');
+  return null;
+}

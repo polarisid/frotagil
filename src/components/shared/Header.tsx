@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { LogOutIcon, UserCircleIcon, SettingsIcon, TruckIcon, ListChecksIcon, LayoutDashboardIcon, WrenchIcon, UsersIcon, AlertTriangle as AlertTriangleIconLucide, HistoryIcon, BarChart3Icon, ChevronDownIcon, CarIcon, ClipboardCheckIcon, ShieldAlertIcon, CalendarClockIcon } from 'lucide-react';
+import { LogOutIcon, UserCircleIcon, SettingsIcon, TruckIcon, ListChecksIcon, LayoutDashboardIcon, WrenchIcon, UsersIcon, AlertTriangle as AlertTriangleIconLucide, HistoryIcon, BarChart3Icon, ChevronDownIcon, CarIcon, ClipboardCheckIcon, ShieldAlertIcon, CalendarClockIcon, ReceiptTextIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -34,6 +34,7 @@ interface MainNavItem {
 const operatorNavItems: NavItem[] = [
   { href: '/operator/dashboard', label: 'Dashboard', icon: LayoutDashboardIcon },
   { href: '/operator/checklists', label: 'Meus Checklists', icon: ListChecksIcon },
+  { href: '/operator/fines', label: 'Minhas Multas', icon: ReceiptTextIcon },
 ];
 
 const adminNavItems: MainNavItem[] = [
@@ -46,6 +47,7 @@ const adminNavItems: MainNavItem[] = [
       { href: '/admin/checklists', label: 'Checklists de Veículos', icon: ClipboardCheckIcon },
       { href: '/admin/maintenances', label: 'Manutenções', icon: WrenchIcon },
       { href: '/admin/incidents', label: 'Ocorrências', icon: ShieldAlertIcon },
+      { href: '/admin/fines', label: 'Multas', icon: ReceiptTextIcon },
       { href: '/admin/vehicle-usage', label: 'Histórico de Uso', icon: CalendarClockIcon },
     ]
   },
@@ -116,7 +118,7 @@ export function Header({ userRole }: HeaderProps) {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start">
                     {item.subItems.map(subItem => (
-                      <DropdownMenuItem key={subItem.href} asChild className={cn(pathname === subItem.href ? "bg-accent/50" : "")}>
+                      <DropdownMenuItem key={subItem.href} asChild className={cn(pathname === subItem.href || pathname.startsWith(subItem.href + '/') ? "bg-accent/50" : "")}>
                         <Link href={subItem.href}>
                           <subItem.icon className="mr-2 h-4 w-4" />
                           {subItem.label}
@@ -190,7 +192,7 @@ export function Header({ userRole }: HeaderProps) {
                     {currentNavItems.map(navItem => {
                         if (navItem.subItems) {
                             return navItem.subItems.map(sub => (
-                                <DropdownMenuItem key={sub.href} asChild className={cn(pathname === sub.href ? "bg-accent/50" : "")}>
+                                <DropdownMenuItem key={sub.href} asChild className={cn(pathname === sub.href || pathname.startsWith(sub.href + '/') ? "bg-accent/50" : "")}>
                                     <Link href={sub.href}>
                                         <sub.icon className="mr-2 h-4 w-4" />
                                         {sub.label}
@@ -199,7 +201,7 @@ export function Header({ userRole }: HeaderProps) {
                             ));
                         }
                         return (
-                            <DropdownMenuItem key={navItem.href} asChild className={cn(pathname === navItem.href ? "bg-accent/50" : "")}>
+                            <DropdownMenuItem key={navItem.href} asChild className={cn(pathname === navItem.href || (navItem.href && pathname.startsWith(navItem.href + '/')) ? "bg-accent/50" : "")}>
                                 <Link href={navItem.href!}>
                                     <navItem.icon className="mr-2 h-4 w-4" />
                                     {navItem.label}

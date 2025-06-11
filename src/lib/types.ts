@@ -125,3 +125,20 @@ export interface VehicleMileageReportItem {
   kmDrivenThisMonth: number;
 }
 
+export interface Fine {
+  id: string;
+  operatorId: string;
+  operatorName: string; // Denormalized for easier display
+  vehicleId: string;
+  vehiclePlate: string; // Denormalized for easier display
+  infractionCode: string;
+  description: string;
+  location: string;
+  date: string; // ISO string - Date and time of infraction
+  dueDate: string; // ISO string - Due date for payment/appeal
+  amount: number;
+  status: 'pending' | 'paid' | 'appealed' | 'cancelled';
+  attachments?: string[]; // URLs of attachments (e.g., scan of the fine)
+  adminNotes?: string; // Internal notes for administrators
+  createdAt: string; // ISO string - Date when the fine was registered in the system
+}

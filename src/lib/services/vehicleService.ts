@@ -55,22 +55,34 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id'>): Promise<Vehi
     throw new Error(`Veículo com placa ${vehicleData.plate} já existe.`);
   }
 
+  // vehicleData from the form already includes initialMileageSystem set to the input mileage
   const dataToSave = {
-    ...vehicleData,
+    ...vehicleData, 
     plate: vehicleData.plate.toUpperCase(),
     acquisitionDate: vehicleData.acquisitionDate ? Timestamp.fromDate(new Date(vehicleData.acquisitionDate)) : null,
-    pickedUpDate: null, 
-    // initialMileageSystem is already part of vehicleData if passed from the form
-    initialMileageSystem: vehicleData.mileage, // Explicitly set based on form's mileage
+    pickedUpDate: vehicleData.pickedUpDate === undefined ? null : (vehicleData.pickedUpDate ? Timestamp.fromDate(new Date(vehicleData.pickedUpDate)) : null),
+    // mileage is already in vehicleData
+    // initialMileageSystem is already in vehicleData (and correctly set by the form)
   };
 
   const docRef = await addDoc(vehiclesCollection, dataToSave);
-  const savedData = (await getDoc(docRef)).data(); // Get the actual saved data
+  const savedData = (await getDoc(docRef)).data()!; // Get the actual saved data
+  
   return { 
     id: docRef.id, 
-    ...vehicleData, // Use original vehicleData for response structure
-    acquisitionDate: vehicleData.acquisitionDate,
-    initialMileageSystem: savedData?.initialMileageSystem, // Use the value from Firestore
+    // Construct the response object based on the structure of Vehicle type
+    // ensuring all fields are present as expected.
+    plate: savedData.plate,
+    model: savedData.model,
+    make: savedData.make,
+    year: savedData.year,
+    acquisitionDate: savedData.acquisitionDate instanceof Timestamp ? savedData.acquisitionDate.toDate().toISOString().split('T')[0] : savedData.acquisitionDate,
+    status: savedData.status,
+    imageUrl: savedData.imageUrl,
+    assignedOperatorId: savedData.assignedOperatorId,
+    mileage: savedData.mileage,
+    initialMileageSystem: savedData.initialMileageSystem,
+    pickedUpDate: savedData.pickedUpDate instanceof Timestamp ? savedData.pickedUpDate.toDate().toISOString() : savedData.pickedUpDate,
   };
 }
 
