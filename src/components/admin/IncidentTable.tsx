@@ -12,8 +12,8 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { EyeIcon, MoreHorizontalIcon, WrenchIcon, ShieldCheckIcon, ShieldAlertIcon, ShieldXIcon } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { EyeIcon, MoreHorizontalIcon, WrenchIcon, ShieldCheckIcon, ShieldAlertIcon, ShieldXIcon, XCircleIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import Link from 'next/link'; // Import Link
@@ -34,8 +34,8 @@ export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps
 
   const updateIncidentStatusMutation = useMutation({
     mutationFn: ({incidentId, status}: {incidentId: string, status: Incident['status']}) => updateIncident(incidentId, {status}),
-    onSuccess: () => {
-        toast({ title: 'Status da Ocorrência Atualizado' });
+    onSuccess: (_, {status}) => {
+        toast({ title: 'Status da Ocorrência Atualizado', description: `Ocorrência marcada como ${statusConfig[status]?.label || status}.` });
         queryClient.invalidateQueries({ queryKey: ['incidents']});
     },
     onError: (error: Error) => {
@@ -55,11 +55,12 @@ export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps
     return user ? user.name : 'N/A';
   };
 
-  const statusConfig = {
+  const statusConfig: Record<Incident['status'], { label: string; icon: React.ElementType; className: string }> = {
     reported: { label: 'Reportado', icon: ShieldAlertIcon, className: 'bg-blue-100 text-blue-700 border-blue-500' },
     under_analysis: { label: 'Em Análise', icon: ShieldAlertIcon, className: 'bg-yellow-100 text-yellow-700 border-yellow-500' },
     pending_action: { label: 'Ação Pendente', icon: WrenchIcon, className: 'bg-orange-100 text-orange-700 border-orange-500' },
     resolved: { label: 'Resolvido', icon: ShieldCheckIcon, className: 'bg-green-100 text-green-700 border-green-500' },
+    cancelled: { label: 'Cancelado', icon: XCircleIcon, className: 'bg-red-100 text-red-700 border-red-500' },
   };
 
   const handleViewDetails = (incident: Incident) => {
@@ -140,14 +141,23 @@ export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps
                           </Link>
                         </DropdownMenuItem>
                       }
-                      {incident.status !== 'resolved' && (
+                       {incident.status === 'reported' && (
+                        <DropdownMenuItem onClick={() => updateIncidentStatusMutation.mutate({incidentId: incident.id, status: 'under_analysis'})} disabled={updateIncidentStatusMutation.isLoading}>
+                             <ShieldAlertIcon className="mr-2 h-4 w-4" /> Iniciar Análise
+                        </DropdownMenuItem>
+                      )}
+                      {incident.status !== 'resolved' && incident.status !== 'cancelled' && (
                         <DropdownMenuItem onClick={() => updateIncidentStatusMutation.mutate({incidentId: incident.id, status: 'resolved'})} disabled={updateIncidentStatusMutation.isLoading}>
                              <ShieldCheckIcon className="mr-2 h-4 w-4" /> Marcar como Resolvido
                         </DropdownMenuItem>
                       )}
-                       {incident.status === 'reported' && (
-                        <DropdownMenuItem onClick={() => updateIncidentStatusMutation.mutate({incidentId: incident.id, status: 'under_analysis'})} disabled={updateIncidentStatusMutation.isLoading}>
-                             <ShieldAlertIcon className="mr-2 h-4 w-4" /> Iniciar Análise
+                      {incident.status !== 'resolved' && incident.status !== 'cancelled' && (
+                        <DropdownMenuItem 
+                          onClick={() => updateIncidentStatusMutation.mutate({incidentId: incident.id, status: 'cancelled'})} 
+                          disabled={updateIncidentStatusMutation.isLoading}
+                          className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                        >
+                             <XCircleIcon className="mr-2 h-4 w-4" /> Cancelar Sinistro
                         </DropdownMenuItem>
                       )}
                     </DropdownMenuContent>
@@ -161,4 +171,5 @@ export function IncidentTable({ incidents, vehicles, users }: IncidentTableProps
     </div>
   );
 }
+
 

@@ -24,22 +24,18 @@ export async function getMaintenances(filters?: { vehicleId?: string; status?: s
 
   if (filters?.vehicleId) {
     q = query(q, where('vehicleId', '==', filters.vehicleId));
-  }
-
-  if (filters?.status) {
+    // Adicionando ordenação para a consulta específica do diálogo de detalhes
+    // Isso provavelmente exigirá um índice: vehicleId ASC, scheduledDate DESC (ou ASC)
+    q = query(q, orderBy('scheduledDate', 'desc')); 
+  } else if (filters?.status) {
+    // Se o status é filtrado, mas não o vehicleId, ordena por scheduledDate
     q = query(q, where('status', '==', filters.status));
-    // If status is filtered, order by scheduledDate
     q = query(q, orderBy('scheduledDate', 'asc'));
   } else {
-    // Status is NOT filtered
-    // Only order by scheduledDate if vehicleId is also NOT filtered.
-    // If vehicleId IS filtered (but status is not), we avoid ordering by scheduledDate
-    // to prevent the specific index error for (vehicleId, scheduledDate).
-    if (!filters?.vehicleId) {
-      q = query(q, orderBy('scheduledDate', 'asc'));
-    }
-    // If filters.vehicleId is defined here, no orderBy('scheduledDate') is added from this block.
+    // Se nenhum filtro específico é aplicado, ordena por scheduledDate como padrão
+    q = query(q, orderBy('scheduledDate', 'asc'));
   }
+
 
   const snapshot = await getDocs(q);
   return snapshot.docs.map(docSnap => {
@@ -215,3 +211,4 @@ export async function updateMaintenance(id: string, maintenanceData: Partial<Omi
 export async function deleteMaintenance(id: string): Promise<void> {
   await deleteDoc(doc(db, 'maintenances', id));
 }
+

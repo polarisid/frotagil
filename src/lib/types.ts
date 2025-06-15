@@ -1,4 +1,5 @@
 
+
 export interface Vehicle {
   id: string;
   plate: string;
@@ -64,7 +65,7 @@ export interface Incident {
   date: string;
   description: string;
   attachments?: string[];
-  status: 'under_analysis' | 'resolved' | 'pending_action' | 'reported';
+  status: 'under_analysis' | 'resolved' | 'pending_action' | 'reported' | 'cancelled';
 }
 
 export type KPI = {
@@ -125,6 +126,19 @@ export interface VehicleMileageReportItem {
   kmDrivenThisMonth: number;
 }
 
+export interface VehicleCostReportItem {
+  vehicleId: string;
+  plate: string;
+  make: string;
+  model: string;
+  totalMaintenanceCostThisMonth: number;
+  totalFineAmountThisMonth: number;
+  totalCostThisMonth: number;
+  totalMaintenanceCostThisYear: number;
+  totalFineAmountThisYear: number;
+  totalCostThisYear: number;
+}
+
 export interface Fine {
   id: string;
   operatorId: string;
@@ -142,3 +156,6 @@ export interface Fine {
   adminNotes?: string; // Internal notes for administrators
   createdAt: string; // ISO string - Date when the fine was registered in the system
 }
+
+
+
