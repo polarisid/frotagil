@@ -26,11 +26,12 @@ import { useToast } from '@/hooks/use-toast';
 import type { Vehicle } from '@/lib/types';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '../ui/card';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateVehicle } from '@/lib/services/vehicleService';
+import { addMaintenance } from '@/lib/services/maintenanceService';
 
 const vehicleFormSchema = z.object({
   model: z.string().min(1, "Modelo é obrigatório.").max(50, "Modelo deve ter no máximo 50 caracteres."),
@@ -81,8 +82,44 @@ export function EditVehicleForm({ vehicle, onFormSubmitSuccess }: EditVehicleFor
     },
   });
 
+  const addMaintenanceLogMutation = useMutation({
+    mutationFn: addMaintenance,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['maintenances', vehicle.id] });
+      queryClient.invalidateQueries({ queryKey: ['vehicleHistory', vehicle.id] });
+    },
+    onError: (error) => {
+      console.error("Failed to log status change as maintenance:", error);
+    }
+  });
+
   const updateVehicleMutation = useMutation<void, Error, { id: string; data: Partial<Omit<Vehicle, 'id'| 'plate'>> }>({
-    mutationFn: ({ id, data }) => updateVehicle(id, data),
+    mutationFn: async ({ id, data }) => {
+      const originalStatus = vehicle.status;
+      const newStatus = data.status;
+
+      await updateVehicle(id, data);
+
+      if (newStatus && originalStatus !== newStatus) {
+        const statusLabels = {
+          active: 'Ativo',
+          inactive: 'Inativo',
+          maintenance: 'Em Manutenção'
+        };
+        const logDescription = `Status do veículo alterado de '${statusLabels[originalStatus]}' para '${statusLabels[newStatus]}'`;
+        
+        await addMaintenanceLogMutation.mutateAsync({
+          vehicleId: id,
+          type: 'preventive',
+          description: logDescription,
+          priority: 'low',
+          status: 'completed',
+          scheduledDate: format(new Date(), 'yyyy-MM-dd'),
+          completionDate: format(new Date(), 'yyyy-MM-dd'),
+          cost: 0,
+        });
+      }
+    },
     onSuccess: () => {
       toast({
         title: 'Veículo Atualizado!',
@@ -102,12 +139,20 @@ export function EditVehicleForm({ vehicle, onFormSubmitSuccess }: EditVehicleFor
   });
 
   function onSubmit(values: VehicleFormValues) {
-    const dataToUpdate: Partial<Omit<Vehicle, 'id' | 'plate'>> = {
+    const dataToUpdate: Partial<Omit<Vehicle, 'id' | 'plate' | 'initialMileageSystem'>> = {
       ...values,
-      year: Number(values.year), // Zod preprocess handles conversion
+      year: Number(values.year), 
       acquisitionDate: format(values.acquisitionDate, 'yyyy-MM-dd'),
-      mileage: values.mileage === '' || values.mileage === undefined || values.mileage === null ? undefined : Number(values.mileage), // Zod preprocess handles this
+      mileage: values.mileage === '' || values.mileage === undefined || values.mileage === null ? undefined : Number(values.mileage),
     };
+
+    const originalAcquisitionDate = vehicle.acquisitionDate ? parseISO(vehicle.acquisitionDate) : null;
+    const newAcquisitionDate = values.acquisitionDate;
+    
+    if (originalAcquisitionDate && !isSameDay(originalAcquisitionDate, newAcquisitionDate)) {
+        (dataToUpdate as Partial<Vehicle>).initialMileageSystem = (dataToUpdate as Partial<Vehicle>).mileage;
+    }
+
     updateVehicleMutation.mutate({ id: vehicle.id, data: dataToUpdate });
   }
 
@@ -135,7 +180,6 @@ export function EditVehicleForm({ vehicle, onFormSubmitSuccess }: EditVehicleFor
                         </FormItem>
                     )}
                 />
-
 
                 <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 <FormField
@@ -284,5 +328,8 @@ export function EditVehicleForm({ vehicle, onFormSubmitSuccess }: EditVehicleFor
     </Card>
   );
 }
+    
+
+    
 
     

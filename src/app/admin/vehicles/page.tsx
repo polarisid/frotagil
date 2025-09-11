@@ -14,9 +14,11 @@ import { getVehicles } from '@/lib/services/vehicleService';
 import type { Vehicle } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useState } from 'react';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 
 export default function AdminVehiclesPage() {
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState<Vehicle['status'] | 'all'>('all');
 
   const { data: vehicles, isLoading, error } = useQuery<Vehicle[], Error>({
     queryKey: ['vehicles'],
@@ -24,10 +26,16 @@ export default function AdminVehiclesPage() {
   });
 
   const filteredVehicles = vehicles?.filter(
-    (vehicle) =>
-      vehicle.plate.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      vehicle.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      vehicle.make.toLowerCase().includes(searchTerm.toLowerCase())
+    (vehicle) => {
+      const searchMatch = 
+        vehicle.plate.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        vehicle.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        vehicle.make.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const statusMatch = selectedStatus === 'all' || vehicle.status === selectedStatus;
+
+      return searchMatch && statusMatch;
+    }
   ) || [];
 
 
@@ -36,8 +44,9 @@ export default function AdminVehiclesPage() {
       <Container>
         <PageTitle title="Gerenciamento de Veículos" description="Carregando veículos..." />
         <Card className="mb-6 shadow">
-          <CardContent className="p-4">
-            <Skeleton className="h-10 w-full" />
+          <CardContent className="p-4 flex gap-4">
+            <Skeleton className="h-10 flex-grow" />
+            <Skeleton className="h-10 w-48" />
           </CardContent>
         </Card>
         <Skeleton className="h-64 w-full" />
@@ -70,7 +79,7 @@ export default function AdminVehiclesPage() {
       
       <Card className="mb-6 shadow">
         <CardContent className="p-4">
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row">
                 <div className="relative flex-grow">
                     <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input 
@@ -80,7 +89,17 @@ export default function AdminVehiclesPage() {
                       onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
-                {/* <Button variant="outline">Buscar</Button> Search is now live */}
+                <Select value={selectedStatus} onValueChange={(value) => setSelectedStatus(value as Vehicle['status'] | 'all')}>
+                    <SelectTrigger className="w-full sm:w-[180px]">
+                        <SelectValue placeholder="Filtrar por status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">Todos os Status</SelectItem>
+                        <SelectItem value="active">Ativo</SelectItem>
+                        <SelectItem value="inactive">Inativo</SelectItem>
+                        <SelectItem value="maintenance">Em Manutenção</SelectItem>
+                    </SelectContent>
+                </Select>
             </div>
         </CardContent>
       </Card>

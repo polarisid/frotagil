@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { AlertTriangleIcon, BarChart3Icon, UsersIcon, TruckIcon, CalendarDaysIcon, CalendarRangeIcon, ListChecksIcon, CalendarIcon as CalendarFilterIcon, TrendingUpIcon, DollarSignIcon, WrenchIcon, ReceiptTextIcon } from 'lucide-react';
+import { AlertTriangleIcon, BarChart3Icon, UsersIcon, TruckIcon, CalendarDaysIcon, CalendarRangeIcon, ListChecksIcon, CalendarIcon as CalendarFilterIcon, TrendingUpIcon, DollarSignIcon, WrenchIcon, ReceiptTextIcon, DownloadIcon } from 'lucide-react';
 import { getOperatorPerformanceReport, getVehicleMileageReport, getVehicleCostReport } from '@/lib/services/reportService';
 import type { OperatorPerformanceReportItem, VehicleMileageReportItem, VehicleCostReportItem, Maintenance, Fine } from '@/lib/types';
 import { useState } from 'react';
@@ -24,11 +24,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { getMaintenances } from '@/lib/services/maintenanceService';
 import { getFines } from '@/lib/services/fineService';
+import * as XLSX from 'xlsx';
+import { useToast } from '@/hooks/use-toast';
 
 export default function AdminReportsPage() {
   const [reportReferenceDate, setReportReferenceDate] = useState<Date>(new Date());
   const [vehicleDetailsDialogOpen, setVehicleDetailsDialogOpen] = useState(false);
   const [selectedVehicleForDetails, setSelectedVehicleForDetails] = useState<VehicleCostReportItem | null>(null);
+  const { toast } = useToast();
 
   const { data: operatorPerformance, isLoading: operatorLoading, error: operatorError } = useQuery<OperatorPerformanceReportItem[], Error>({
     queryKey: ['operatorPerformanceReport', reportReferenceDate.toISOString().split('T')[0]],
@@ -105,6 +108,52 @@ export default function AdminReportsPage() {
     setSelectedVehicleForDetails(vehicleData);
     setVehicleDetailsDialogOpen(true);
   };
+  
+  const handleExportExcel = () => {
+    if (!vehicleMileage) {
+      toast({
+        variant: "destructive",
+        title: "Erro",
+        description: "Dados de quilometragem não estão disponíveis para exportação.",
+      });
+      return;
+    }
+
+    const dataToExport = vehicleMileage.map(v => ({
+      'Placa': v.plate,
+      'Modelo': `${v.make} ${v.model}`,
+      'Data de Aquisição': v.acquisitionDate ? format(parseISO(v.acquisitionDate), 'dd/MM/yyyy', { locale: ptBR }) : 'N/A',
+      'KM Inicial (Sistema)': v.initialMileageSystem || 'N/A',
+      'KM Rodado (Semana)': v.kmDrivenThisWeek,
+      'KM Rodado (Mês)': v.kmDrivenThisMonth,
+      'KM Total (Odômetro)': v.totalMileage || 'N/A',
+      'Data da Última Retirada': v.lastPickedUpDate ? format(parseISO(v.lastPickedUpDate), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : 'Nenhuma retirada',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Quilometragem");
+
+    // Adjust column widths
+    worksheet['!cols'] = [
+      { wch: 12 }, // Placa
+      { wch: 25 }, // Modelo
+      { wch: 20 }, // Data de Aquisição
+      { wch: 20 }, // KM Inicial (Sistema)
+      { wch: 20 }, // KM Rodado (Semana)
+      { wch: 20 }, // KM Rodado (Mês)
+      { wch: 20 }, // KM Total (Odômetro)
+      { wch: 25 }, // Data da Última Retirada
+    ];
+
+    XLSX.writeFile(workbook, `Relatorio_Quilometragem_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+
+    toast({
+      title: "Exportação Concluída",
+      description: "O relatório de quilometragem foi exportado para Excel.",
+    });
+  };
+
 
   if (isLoading) {
     return (
@@ -206,7 +255,7 @@ export default function AdminReportsPage() {
                     </TableHead>
                     <TableHead className="text-right">
                       <AlertTriangleIcon className="mr-1 h-4 w-4 text-muted-foreground inline-block align-middle" />
-                      <span className="align-middle">Sinistros</span>
+                      <span className="align-middle">Ocorrências</span>
                     </TableHead>
                     <TableHead className="text-right">
                       <ListChecksIcon className="mr-1 h-4 w-4 text-muted-foreground inline-block align-middle" />
@@ -233,9 +282,15 @@ export default function AdminReportsPage() {
         </Card>
 
         <Card className="shadow-md">
-          <CardHeader>
-            <CardTitle className="flex items-center"><TruckIcon className="mr-2 h-5 w-5 text-primary" />Quilometragem dos Veículos</CardTitle>
-            <CardDescription>Quilometragem rodada por cada veículo na semana e mês de referência.</CardDescription>
+          <CardHeader className="flex flex-row items-start justify-between">
+            <div>
+                <CardTitle className="flex items-center"><TruckIcon className="mr-2 h-5 w-5 text-primary" />Quilometragem dos Veículos</CardTitle>
+                <CardDescription>Quilometragem rodada por cada veículo na semana e mês de referência.</CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleExportExcel} disabled={!vehicleMileage || vehicleMileage.length === 0}>
+                <DownloadIcon className="mr-2 h-4 w-4" />
+                Exportar Excel
+            </Button>
           </CardHeader>
           <CardContent>
             {vehicleMileage && vehicleMileage.length > 0 ? (
@@ -414,4 +469,3 @@ export default function AdminReportsPage() {
     </Container>
   );
 }
-

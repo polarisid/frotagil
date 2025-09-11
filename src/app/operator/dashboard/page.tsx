@@ -351,9 +351,9 @@ export default function OperatorDashboardPage() {
     { title: 'Checklists (Semana)', value: weeklyChecklists, icon: ClipboardListIcon, bgColorClass: 'bg-indigo-100 dark:bg-indigo-900/30' },
     { title: 'Checklists (Mês)', value: monthlyChecklists, icon: ClipboardListIcon, bgColorClass: 'bg-purple-100 dark:bg-purple-900/30' },
     { title: 'Checklists (Total)', value: totalChecklists, icon: FileTextIcon, bgColorClass: 'bg-pink-100 dark:bg-pink-900/30' },
-    { title: 'Sinistros (Semana)', value: weeklyIncidents, icon: MessageSquareWarningIcon, bgColorClass: 'bg-red-100 dark:bg-red-900/30' },
-    { title: 'Sinistros (Mês)', value: monthlyIncidents, icon: MessageSquareWarningIcon, bgColorClass: 'bg-orange-100 dark:bg-orange-900/30' },
-    { title: 'Sinistros (Total)', value: totalIncidents, icon: AlertTriangleIcon, bgColorClass: 'bg-yellow-100 dark:bg-yellow-900/30' },
+    { title: 'Ocorrências (Semana)', value: weeklyIncidents, icon: MessageSquareWarningIcon, bgColorClass: 'bg-red-100 dark:bg-red-900/30' },
+    { title: 'Ocorrências (Mês)', value: monthlyIncidents, icon: MessageSquareWarningIcon, bgColorClass: 'bg-orange-100 dark:bg-orange-900/30' },
+    { title: 'Ocorrências (Total)', value: totalIncidents, icon: AlertTriangleIcon, bgColorClass: 'bg-yellow-100 dark:bg-yellow-900/30' },
   ];
 
 
@@ -681,5 +681,6 @@ export default function OperatorDashboardPage() {
     
 
     
+
 
 

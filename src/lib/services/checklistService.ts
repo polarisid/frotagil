@@ -123,11 +123,12 @@ export async function addChecklist(checklistData: Omit<Checklist, 'id' | 'date'>
 
 export async function updateChecklist(id: string, checklistData: Partial<Omit<Checklist, 'id'>>): Promise<void> {
   const docRef = doc(db, 'checklists', id);
-  const dataToUpdate = { ...checklistData };
+  const dataToUpdate: {[key: string]: any} = { ...checklistData };
+  
   if (checklistData.date && typeof checklistData.date === 'string') {
-    (dataToUpdate as any).date = Timestamp.fromDate(new Date(checklistData.date));
+    dataToUpdate.date = Timestamp.fromDate(new Date(checklistData.date));
   } else if (checklistData.date && checklistData.date instanceof Date) {
-     (dataToUpdate as any).date = Timestamp.fromDate(checklistData.date);
+     dataToUpdate.date = Timestamp.fromDate(checklistData.date);
   }
   await updateDoc(docRef, dataToUpdate);
 }

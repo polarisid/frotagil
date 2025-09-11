@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import type { Vehicle } from '@/lib/types';
@@ -13,7 +14,7 @@ import {
 import { Button, buttonVariants } from '@/components/ui/button'; 
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Edit3Icon, Trash2Icon, MoreHorizontalIcon, EyeIcon, WrenchIcon,TrendingUpIcon, TrendingDownIcon } from 'lucide-react';
+import { Edit3Icon, Trash2Icon, MoreHorizontalIcon, EyeIcon, WrenchIcon,TrendingUpIcon, TrendingDownIcon, HistoryIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
@@ -136,6 +137,11 @@ export function VehicleTable({ vehicles }: VehicleTableProps) {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuLabel>Opções</DropdownMenuLabel>
+                    <DropdownMenuItem asChild>
+                      <Link href={`/admin/vehicles/history/${vehicle.id}`}>
+                        <HistoryIcon className="mr-2 h-4 w-4" /> Ver Histórico
+                      </Link>
+                    </DropdownMenuItem>
                     <DropdownMenuItem asChild>
                       <Link href={`/admin/vehicles/edit/${vehicle.id}`}>
                         <Edit3Icon className="mr-2 h-4 w-4" /> Editar

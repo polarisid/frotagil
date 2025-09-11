@@ -23,18 +23,20 @@ import { useToast } from '@/hooks/use-toast';
 import { PrinterIcon, SendIcon, FilePenLineIcon, GaugeIcon, Undo2Icon, RouteIcon, AlertTriangleIcon, Loader2Icon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
-import { addChecklist as addChecklistService } from '@/lib/services/checklistService';
+import { addChecklist as addChecklistService, updateChecklist as updateChecklistService } from '@/lib/services/checklistService';
 import { updateVehicle as updateVehicleService, returnVehicle } from '@/lib/services/vehicleService';
 import { getChecklistItemDefinitions } from '@/lib/services/checklistDefinitionService';
 import jsPDF from 'jspdf';
 import { format as formatDateFn } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Skeleton } from '../ui/skeleton';
 import { Alert, AlertTitle, AlertDescription as UIDescription } from '../ui/alert';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription as AlertDesc, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+
 
 // Function to create the schema Zod dinamicamente
-const createFormSchema = (definitions: ChecklistItemDefinition[]) => {
+const createFormSchema = (definitions: ChecklistItemDefinition[], currentMileage: number = 0) => {
     const schemaObject: any = {};
     definitions.forEach(item => {
         schemaObject[item.itemId] = z.union([z.literal(true), z.literal(false)], {
@@ -45,7 +47,8 @@ const createFormSchema = (definitions: ChecklistItemDefinition[]) => {
 
     schemaObject.mileage = z.preprocess(
       (val) => (val === "" || val === undefined || val === null ? undefined : Number(String(val).replace(/\./g, ''))),
-      z.number({ required_error: "KM é obrigatório." }).positive({ message: "KM deve ser um número positivo." })
+      z.number({ required_error: "KM é obrigatório." })
+       .min(currentMileage, { message: `KM não pode ser menor que a atual (${currentMileage.toLocaleString('pt-BR')}).`})
     );
     schemaObject.routeDescription = z.string().max(100, { message: "Descrição da rota não pode exceder 100 caracteres." }).optional();
     schemaObject.observations = z.string().max(500, { message: "Observações devem ter no máximo 500 caracteres." }).optional();
@@ -60,6 +63,8 @@ interface ChecklistFormProps {
   currentOperatorName: string;
   currentOperatorId: string;
 }
+
+type FormData = z.infer<ReturnType<typeof createFormSchema>>;
 
 // Helper function to generate defaultValues dynamically
 const getDynamicDefaultValues = (
@@ -86,6 +91,10 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   const { toast } = useToast();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [isMileageAlertOpen, setIsMileageAlertOpen] = useState(false);
+  const [formDataForConfirmation, setFormDataForConfirmation] = useState<FormData | null>(null);
+  
+  const MILEAGE_DIFFERENCE_THRESHOLD = 5000;
 
   const { data: activeItemDefinitions, isLoading: definitionsLoading, error: queryError } = useQuery<ChecklistItemDefinition[], Error>({
     queryKey: ['checklistItemDefinitions', true], // Fetch only active items
@@ -95,25 +104,22 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   
   const formSchema = useMemo(() => {
     if (activeItemDefinitions && activeItemDefinitions.length > 0) {
-      return createFormSchema(activeItemDefinitions);
+      return createFormSchema(activeItemDefinitions, vehicle.mileage ?? 0);
     }
-    // Return a minimal schema or handle appropriately if definitions are not yet loaded
-    // This base schema helps prevent errors before definitions are loaded.
     return z.object({
       mileage: z.preprocess(
         (val) => (val === "" || val === undefined || val === null ? undefined : Number(String(val).replace(/\./g, ''))),
-        z.number({ required_error: "KM é obrigatório." }).positive({ message: "KM deve ser um número positivo." })
+        z.number({ required_error: "KM é obrigatório." }).min(vehicle.mileage ?? 0, { message: `KM não pode ser menor que a atual (${(vehicle.mileage ?? 0).toLocaleString('pt-BR')}).`})
       ),
       routeDescription: z.string().max(100, { message: "Descrição da rota não pode exceder 100 caracteres." }).optional(),
       observations: z.string().max(500, { message: "Observações devem ter no máximo 500 caracteres." }).optional(),
       signature: z.string().min(3, { message: 'Assinatura é obrigatória.' })
     });
-  }, [activeItemDefinitions]);
+  }, [activeItemDefinitions, vehicle.mileage]);
 
 
-  const form = useForm<z.infer<typeof formSchema>>({
+  const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
-    // Default values will be set in useEffect once definitions are loaded
     defaultValues: {},
     disabled: !!existingChecklist || definitionsLoading,
   });
@@ -132,12 +138,12 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
 
 
   const addChecklistMutation = useMutation({
-    mutationFn: async (values: z.infer<typeof formSchema>) => {
+    mutationFn: async (values: FormData) => {
       if (!activeItemDefinitions) throw new Error("Checklist items not loaded.");
       const itemsForDb: ChecklistItemType[] = activeItemDefinitions.map(itemDef => ({
         id: itemDef.itemId,
         label: itemDef.label,
-        value: values[itemDef.itemId as keyof typeof values] as boolean, // Cast as boolean, ensure schema enforces this
+        value: values[itemDef.itemId as keyof typeof values] as boolean,
       }));
 
       const newChecklistData: Omit<Checklist, 'id' | 'date'> & { date: Date } = {
@@ -146,10 +152,10 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
         operatorName: currentOperatorName,
         date: new Date(),
         items: itemsForDb,
-        mileage: values.mileage!, // Schema ensures it's a number
+        mileage: values.mileage!,
         routeDescription: values.routeDescription ?? undefined,
         observations: values.observations ?? '',
-        signature: values.signature!, // Schema ensures it's a string
+        signature: values.signature!,
       };
       await addChecklistService(newChecklistData);
       await updateVehicleService(vehicle.id, { mileage: values.mileage! });
@@ -197,19 +203,28 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   });
 
 
-  function onSubmit(values: z.infer<typeof formSchema>) {
+  function onSubmit(values: FormData) {
     if (existingChecklist) {
       toast({ title: 'Visualização de Checklist', description: `Checklist para ${vehicle.plate} carregado.` });
       return;
     }
-    if (vehicle.mileage !== undefined && values.mileage! < vehicle.mileage) {
-        form.setError("mileage", {
-            type: "manual",
-            message: `KM atual não pode ser menor que o último KM registrado (${vehicle.mileage.toLocaleString('pt-BR')}).`
-        });
-        return;
+    
+    const mileageDifference = values.mileage - (vehicle.mileage ?? 0);
+
+    if (mileageDifference > MILEAGE_DIFFERENCE_THRESHOLD) {
+      setFormDataForConfirmation(values);
+      setIsMileageAlertOpen(true);
+    } else {
+      addChecklistMutation.mutate(values);
     }
-    addChecklistMutation.mutate(values);
+  }
+  
+  const handleConfirmMileage = () => {
+    if(formDataForConfirmation){
+        addChecklistMutation.mutate(formDataForConfirmation);
+    }
+    setIsMileageAlertOpen(false);
+    setFormDataForConfirmation(null);
   }
 
   function handleExportPdf() {
@@ -452,6 +467,7 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
   }
 
   return (
+    <>
     <Card className="w-full max-w-2xl mx-auto shadow-xl">
       <CardHeader>
         <CardTitle className="flex items-center text-2xl">
@@ -617,6 +633,26 @@ export function ChecklistForm({ vehicle, existingChecklist, currentOperatorName,
         </form>
       </Form>
     </Card>
+    
+    <AlertDialog open={isMileageAlertOpen} onOpenChange={setIsMileageAlertOpen}>
+        <AlertDialogContent>
+            <AlertDialogHeader>
+                <AlertDialogTitle className="flex items-center">
+                    <AlertTriangleIcon className="mr-2 h-6 w-6 text-yellow-500" />
+                    Confirmar Quilometragem
+                </AlertDialogTitle>
+                <AlertDesc>
+                    A quilometragem inserida ({formDataForConfirmation?.mileage.toLocaleString('pt-BR')} km) parece muito alta em comparação com a última registrada ({vehicle.mileage?.toLocaleString('pt-BR')} km).
+                    <br/><br/>
+                    Deseja prosseguir com este valor?
+                </AlertDesc>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+                <AlertDialogCancel onClick={() => setFormDataForConfirmation(null)}>Corrigir</AlertDialogCancel>
+                <AlertDialogAction onClick={handleConfirmMileage}>Sim, prosseguir</AlertDialogAction>
+            </AlertDialogFooter>
+        </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
-

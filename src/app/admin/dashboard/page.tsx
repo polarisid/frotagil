@@ -21,7 +21,7 @@ import { getUsers } from '@/lib/services/userService';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
-import { addDays, differenceInDays, isPast, isToday, format } from 'date-fns';
+import { addDays, differenceInDays, isPast, isToday, format, parseISO, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function AdminDashboardPage() {
@@ -77,21 +77,13 @@ export default function AdminDashboardPage() {
       if (maint.status !== 'planned' && maint.status !== 'in_progress') return false;
 
       const vehicle = vehicles?.find(v => v.id === maint.vehicleId);
-      // If vehicle is inactive, do not show its planned/in_progress maintenances in this "attention" list
       if (vehicle?.status === 'inactive') return false;
-
-      // If vehicle data is not available yet, or vehicle not found, we can't check KM.
-      // Decide if you want to include it based on date only, or exclude. For now, exclude if KM check is crucial.
-      // For this logic, if KM is part of the check, vehicle must exist.
-      // If scheduledKm is defined, vehicle must be found.
       if (maint.scheduledKm !== undefined && maint.scheduledKm !== null && !vehicle) return false;
-
 
       let isRelevantByDate = false;
       if (maint.scheduledDate) {
-        const scheduledDateObj = new Date(maint.scheduledDate + "T00:00:00"); // Ensure comparison at midnight
-        // Relevant if scheduled in the next 30 days (inclusive of today) OR if it's already past due
-        if (scheduledDateObj <= thirtyDaysFromNow) { 
+        const scheduledDateObj = parseISO(maint.scheduledDate);
+        if (isValid(scheduledDateObj) && scheduledDateObj <= thirtyDaysFromNow) { 
           isRelevantByDate = true;
         }
       }
@@ -110,20 +102,22 @@ export default function AdminDashboardPage() {
       let isOverdueByKm = false;
       let dateDetails = "";
       let kmDetails = "";
-
+      let scheduledDateObj: Date | null = null;
+      
       if (maint.scheduledDate) {
-          const scheduledDateObj = new Date(maint.scheduledDate + "T00:00:00");
-          const daysDiff = differenceInDays(scheduledDateObj, today); // positive if future, negative if past
-          if (isPast(scheduledDateObj) && !isToday(scheduledDateObj)) {
-              isOverdueByDate = true;
-              dateDetails = `Venceu há ${Math.abs(daysDiff)} dia(s)`;
-          } else if (isToday(scheduledDateObj)) {
-              dateDetails = `Vence hoje`;
-          } else if (daysDiff > 0 && daysDiff <= 30) {
-              dateDetails = `Vence em ${daysDiff} dia(s)`;
-          } else if (daysDiff > 30) {
-              // Not "overdue" yet, but might be relevant by KM. Show date if available.
-              dateDetails = `Agendado: ${format(scheduledDateObj, 'dd/MM/yyyy', {locale: ptBR})}`;
+          scheduledDateObj = parseISO(maint.scheduledDate);
+          if (isValid(scheduledDateObj)) {
+            const daysDiff = differenceInDays(scheduledDateObj, today);
+            if (isPast(scheduledDateObj) && !isToday(scheduledDateObj)) {
+                isOverdueByDate = true;
+                dateDetails = `Venceu há ${Math.abs(daysDiff)} dia(s)`;
+            } else if (isToday(scheduledDateObj)) {
+                dateDetails = `Vence hoje`;
+            } else if (daysDiff > 0 && daysDiff <= 30) {
+                dateDetails = `Vence em ${daysDiff} dia(s)`;
+            } else if (daysDiff > 30) {
+                dateDetails = `Agendado: ${format(scheduledDateObj, 'dd/MM/yyyy', {locale: ptBR})}`;
+            }
           }
       }
 
@@ -142,7 +136,7 @@ export default function AdminDashboardPage() {
       let urgencyScore = 3; // Default: upcoming
       if (isOverdue) urgencyScore = 1; // Overdue
       else if (
-        (maint.scheduledDate && isToday(new Date(maint.scheduledDate + "T00:00:00"))) ||
+        (maint.scheduledDate && scheduledDateObj && isToday(scheduledDateObj)) ||
         (maint.scheduledKm && vehicle && typeof vehicle.mileage === 'number' && (maint.scheduledKm - vehicle.mileage <= 1000 && maint.scheduledKm - vehicle.mileage >=0)) // Within 1000km
       ) {
         urgencyScore = 2; // Due today or very soon by KM
@@ -157,8 +151,7 @@ export default function AdminDashboardPage() {
           dateDetails,
           kmDetails,
           urgencyScore,
-          // For sorting, ensure scheduledDate and kmDifference are available or have fallbacks
-          _scheduledDateObj: maint.scheduledDate ? new Date(maint.scheduledDate + "T00:00:00") : new Date(8640000000000000), // Far future for sorting if no date
+          _scheduledDateObj: scheduledDateObj || new Date(8640000000000000), // Far future for sorting if no date
           _kmDifference: (maint.scheduledKm && vehicle && typeof vehicle.mileage === 'number') ? (maint.scheduledKm - vehicle.mileage) : Infinity,
       };
     })
@@ -166,34 +159,31 @@ export default function AdminDashboardPage() {
       if (a.urgencyScore !== b.urgencyScore) {
           return a.urgencyScore - b.urgencyScore;
       }
-      // If same urgency score, sort by proximity
-      if (a.isOverdue && b.isOverdue) { // Both overdue
+      if (a.isOverdue && b.isOverdue) {
           if (a.isOverdueByDate && !b.isOverdueByDate) return -1;
           if (!a.isOverdueByDate && b.isOverdueByDate) return 1;
           if (a.isOverdueByDate && b.isOverdueByDate) {
-               return a._scheduledDateObj.getTime() - b._scheduledDateObj.getTime(); // Earlier overdue date first
+               return a._scheduledDateObj.getTime() - b._scheduledDateObj.getTime();
           }
-          return a._kmDifference - b._kmDifference; // More KM overdue first (more negative _kmDifference)
+          return a._kmDifference - b._kmDifference;
       }
       if (a.isOverdue) return -1;
       if (b.isOverdue) return 1;
 
-      // Both not overdue, sort by whichever is "closer"
       const dateProximityA = a.scheduledDate ? differenceInDays(a._scheduledDateObj, today) : Infinity;
       const dateProximityB = b.scheduledDate ? differenceInDays(b._scheduledDateObj, today) : Infinity;
-      const kmProximityA = a._kmDifference > 0 ? a._kmDifference : Infinity; // only consider positive diff (km remaining)
+      const kmProximityA = a._kmDifference > 0 ? a._kmDifference : Infinity;
       const kmProximityB = b._kmDifference > 0 ? b._kmDifference : Infinity;
 
       if(dateProximityA !== dateProximityB && dateProximityA !== Infinity && dateProximityB !== Infinity) {
-          return dateProximityA - dateProximityB; // Closer date first
+          return dateProximityA - dateProximityB;
       }
       if(kmProximityA !== kmProximityB && kmProximityA !== Infinity && kmProximityB !== Infinity) {
-          return kmProximityA - kmProximityB; // Closer KM first
+          return kmProximityA - kmProximityB;
       }
-      // Fallback if one has date and other has KM, or other complex cases
-      if (a.scheduledDate && !b.scheduledDate) return -1; // Prioritize date-scheduled
+      if (a.scheduledDate && !b.scheduledDate) return -1;
       if (!a.scheduledDate && b.scheduledDate) return 1;
-      return a._scheduledDateObj.getTime() - b._scheduledDateObj.getTime(); // Default date sort
+      return a._scheduledDateObj.getTime() - b._scheduledDateObj.getTime();
     })
     .slice(0, 5) || [];
 
@@ -408,3 +398,5 @@ export default function AdminDashboardPage() {
     </Container>
   );
 }
+
+    

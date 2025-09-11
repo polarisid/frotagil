@@ -160,4 +160,3 @@ export async function returnVehicle(vehicleId: string, operatorId: string, newMi
 
   await completeVehicleUsageLog(vehicleId, operatorId, newMileage);
 }
-

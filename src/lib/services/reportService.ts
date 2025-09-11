@@ -78,6 +78,10 @@ export async function getVehicleMileageReport(referenceDate: Date): Promise<Vehi
       model: vehicle.model,
       kmDrivenThisWeek: calculateTotalKm(vehicleWeeklyLogs),
       kmDrivenThisMonth: calculateTotalKm(vehicleMonthlyLogs),
+      totalMileage: vehicle.mileage,
+      lastPickedUpDate: vehicle.pickedUpDate,
+      acquisitionDate: vehicle.acquisitionDate,
+      initialMileageSystem: vehicle.initialMileageSystem,
     });
   }
   return reportItems;
@@ -163,4 +167,3 @@ export async function getVehicleCostReport(referenceDate: Date): Promise<Vehicle
   }
   return reportItems.sort((a,b) => b.totalCostThisYear - a.totalCostThisYear); // Sort by total yearly cost
 }
-

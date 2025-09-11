@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { EyeIcon, PrinterIcon, MoreHorizontalIcon, GaugeIcon } from 'lucide-react';
+import { EyeIcon, PrinterIcon, MoreHorizontalIcon, GaugeIcon, EditIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
@@ -258,6 +258,13 @@ export function ChecklistTable({ checklists, vehicles, isAdminView = false }: Cu
                         <EyeIcon className="mr-2 h-4 w-4" /> Visualizar
                       </Link>
                     </DropdownMenuItem>
+                    {isAdminView && (
+                      <DropdownMenuItem asChild>
+                        <Link href={`/admin/checklists/edit/${checklist.id}`}>
+                           <EditIcon className="mr-2 h-4 w-4" /> Editar
+                        </Link>
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onClick={() => handleExportPdf(checklist)}>
                       <PrinterIcon className="mr-2 h-4 w-4" /> Exportar PDF
                     </DropdownMenuItem>

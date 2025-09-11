@@ -30,7 +30,7 @@ export interface Checklist {
   items: ChecklistItem[];
   observations: string;
   signature: string;
-  mileage?: number;
+  mileage: number; // Tornando obrigatório para garantir consistência
   routeDescription?: string; 
 }
 
@@ -41,6 +41,18 @@ export interface User {
   role: 'operator' | 'admin';
   status?: 'active' | 'inactive';
 }
+
+export interface WorkshopChecklistItem {
+    id: string;
+    label: string;
+    value: 'ok' | 'nok' | 'na'; // Conforme, Não Conforme, Não se Aplica
+}
+
+export interface WorkshopChecklist {
+    dropOffItems: WorkshopChecklistItem[];
+    pickUpItems: WorkshopChecklistItem[];
+}
+
 
 export interface Maintenance {
   id: string;
@@ -55,6 +67,15 @@ export interface Maintenance {
   observations?: string;
   attachments?: string[];
   completionDate?: string;
+
+  // New fields for workshop flow
+  workshopName?: string;
+  workshopDropOffDate?: string; // ISO String
+  workshopPickUpDate?: string; // ISO String
+  workshopChecklist?: WorkshopChecklist;
+  workshopDropOffObservations?: string;
+  workshopPickUpObservations?: string;
+
 }
 
 export interface Incident {
@@ -124,6 +145,10 @@ export interface VehicleMileageReportItem {
   model: string;
   kmDrivenThisWeek: number;
   kmDrivenThisMonth: number;
+  totalMileage?: number;
+  lastPickedUpDate?: string | null;
+  acquisitionDate: string;
+  initialMileageSystem?: number;
 }
 
 export interface VehicleCostReportItem {
@@ -157,5 +182,9 @@ export interface Fine {
   createdAt: string; // ISO string - Date when the fine was registered in the system
 }
 
-
+export type VehicleHistoryEvent = {
+  type: 'checklist' | 'maintenance' | 'incident' | 'usage';
+  date: string; // ISO String for sorting
+  data: Checklist | Maintenance | Incident | VehicleUsageLog;
+};
 

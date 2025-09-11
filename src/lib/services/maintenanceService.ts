@@ -2,7 +2,7 @@
 'use server';
 
 import { db } from '@/lib/firebase';
-import type { Maintenance } from '@/lib/types';
+import type { Maintenance, WorkshopChecklist } from '@/lib/types';
 import {
   collection,
   doc,
@@ -14,7 +14,8 @@ import {
   query,
   orderBy,
   where,
-  Timestamp
+  Timestamp,
+  writeBatch,
 } from 'firebase/firestore';
 
 const maintenancesCollection = collection(db, 'maintenances');
@@ -45,6 +46,8 @@ export async function getMaintenances(filters?: { vehicleId?: string; status?: s
       ...data,
       scheduledDate: data.scheduledDate instanceof Timestamp ? data.scheduledDate.toDate().toISOString().split('T')[0] : data.scheduledDate,
       completionDate: data.completionDate instanceof Timestamp ? data.completionDate.toDate().toISOString().split('T')[0] : data.completionDate,
+      workshopDropOffDate: data.workshopDropOffDate instanceof Timestamp ? data.workshopDropOffDate.toDate().toISOString() : data.workshopDropOffDate,
+      workshopPickUpDate: data.workshopPickUpDate instanceof Timestamp ? data.workshopPickUpDate.toDate().toISOString() : data.workshopPickUpDate,
     } as Maintenance;
   });
 }
@@ -59,12 +62,14 @@ export async function getMaintenanceById(id: string): Promise<Maintenance | null
       ...data,
       scheduledDate: data.scheduledDate instanceof Timestamp ? data.scheduledDate.toDate().toISOString().split('T')[0] : data.scheduledDate,
       completionDate: data.completionDate instanceof Timestamp ? data.completionDate.toDate().toISOString().split('T')[0] : data.completionDate,
+      workshopDropOffDate: data.workshopDropOffDate instanceof Timestamp ? data.workshopDropOffDate.toDate().toISOString() : data.workshopDropOffDate,
+      workshopPickUpDate: data.workshopPickUpDate instanceof Timestamp ? data.workshopPickUpDate.toDate().toISOString() : data.workshopPickUpDate,
     } as Maintenance;
   }
   return null;
 }
 
-export async function addMaintenance(maintenanceData: Omit<Maintenance, 'id'>): Promise<Maintenance> {
+export async function addMaintenance(maintenanceData: Partial<Omit<Maintenance, 'id'>>): Promise<Maintenance> {
   const {
     vehicleId,
     type,
@@ -212,3 +217,69 @@ export async function deleteMaintenance(id: string): Promise<void> {
   await deleteDoc(doc(db, 'maintenances', id));
 }
 
+export async function dropOffVehicleAtWorkshop(data: {
+    maintenanceId: string,
+    vehicleId: string,
+    mileage: number,
+    workshopName: string,
+    workshopChecklist: WorkshopChecklist,
+    workshopDropOffObservations?: string,
+}): Promise<void> {
+
+    const batch = writeBatch(db);
+
+    // 1. Update vehicle status and mileage
+    const vehicleRef = doc(db, 'vehicles', data.vehicleId);
+    batch.update(vehicleRef, { 
+        status: 'maintenance',
+        mileage: data.mileage 
+    });
+
+    // 2. Update maintenance record
+    const maintenanceRef = doc(db, 'maintenances', data.maintenanceId);
+    batch.update(maintenanceRef, {
+        status: 'in_progress',
+        workshopName: data.workshopName,
+        workshopChecklist: data.workshopChecklist,
+        workshopDropOffDate: Timestamp.fromDate(new Date()),
+        workshopDropOffObservations: data.workshopDropOffObservations || null,
+    });
+    
+    await batch.commit();
+}
+
+export async function pickUpVehicleFromWorkshop(data: {
+    maintenanceId: string,
+    vehicleId: string,
+    workshopChecklist: WorkshopChecklist,
+    workshopPickUpObservations?: string,
+    cost?: number,
+}): Promise<void> {
+
+    const batch = writeBatch(db);
+    const completionDate = new Date();
+
+    // 1. Update vehicle status to 'active'
+    const vehicleRef = doc(db, 'vehicles', data.vehicleId);
+    batch.update(vehicleRef, { status: 'active' });
+
+    // 2. Update maintenance record to 'completed'
+    const maintenanceRef = doc(db, 'maintenances', data.maintenanceId);
+    const updatePayload: Partial<Maintenance> & { [key: string]: any } = {
+        status: 'completed',
+        workshopChecklist: data.workshopChecklist,
+        workshopPickUpDate: Timestamp.fromDate(completionDate),
+        completionDate: Timestamp.fromDate(completionDate),
+        workshopPickUpObservations: data.workshopPickUpObservations || null,
+    };
+    if (data.cost !== undefined) {
+        updatePayload.cost = data.cost;
+    }
+
+    batch.update(maintenanceRef, updatePayload);
+    
+    await batch.commit();
+}
+
+
+    
