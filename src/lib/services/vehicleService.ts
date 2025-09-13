@@ -1,4 +1,7 @@
 
+
+'use server';
+
 import { db } from '@/lib/firebase';
 import type { Vehicle } from '@/lib/types';
 import {
@@ -101,9 +104,18 @@ export async function updateVehicle(id: string, vehicleData: Partial<Omit<Vehicl
       dataToUpdate.pickedUpDate = Timestamp.fromDate(new Date(vehicleData.pickedUpDate));
     }
   }
-  // initialMileageSystem should not be updated here as it's the KM at system entry
-  if (dataToUpdate.hasOwnProperty('initialMileageSystem')) {
-    delete dataToUpdate.initialMileageSystem;
+  
+  // Logic to update initialMileageSystem only if acquisitionDate changes
+  if (vehicleData.acquisitionDate) {
+    const vehicleDoc = await getDoc(docRef);
+    if (vehicleDoc.exists()) {
+        const originalAcquisitionDate = vehicleDoc.data().acquisitionDate;
+        const newAcquisitionDate = dataToUpdate.acquisitionDate;
+        // Compare dates without time part. Firestore Timestamps can be converted to dates.
+        if (originalAcquisitionDate && newAcquisitionDate && originalAcquisitionDate.toDate().toDateString() !== newAcquisitionDate.toDate().toDateString()) {
+            dataToUpdate.initialMileageSystem = vehicleData.mileage;
+        }
+    }
   }
 
 
@@ -132,10 +144,45 @@ export async function pickUpVehicle(vehicleId: string, operatorId: string): Prom
   const operatorVehiclesSnap = await getDocs(operatorVehiclesQuery);
   if (!operatorVehiclesSnap.empty) throw new Error('Operador já possui um veículo atribuído.');
 
+  const pickedUpDate = new Date();
   await updateDoc(vehicleRef, { 
     assignedOperatorId: operatorId,
-    pickedUpDate: Timestamp.fromDate(new Date())
+    pickedUpDate: Timestamp.fromDate(pickedUpDate)
   });
+
+  // N8N Webhook Notification
+  const webhookUrl = process.env.N8N_PICKUP_WEBHOOK_URL;
+  if (webhookUrl) {
+    try {
+      const operator = await getUserById(operatorId);
+      const payload = {
+        event: 'vehicle_picked_up',
+        timestamp: pickedUpDate.toISOString(),
+        vehicle: {
+          id: vehicleId,
+          plate: vehicleData.plate,
+          make: vehicleData.make,
+          model: vehicleData.model,
+        },
+        operator: {
+          id: operatorId,
+          name: operator?.name || 'Desconhecido',
+          email: operator?.email || 'N/A',
+        }
+      };
+
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      console.log('Notificação de retirada de veículo enviada para o webhook.');
+
+    } catch (error) {
+      console.error('Falha ao enviar notificação de webhook:', error);
+      // Non-blocking error, so the main operation succeeds even if the webhook fails.
+    }
+  }
 }
 
 export async function returnVehicle(vehicleId: string, operatorId: string, newMileage: number): Promise<void> {
@@ -146,7 +193,9 @@ export async function returnVehicle(vehicleId: string, operatorId: string, newMi
   const vehicleData = vehicleSnap.data() as Vehicle;
   if (vehicleData.assignedOperatorId !== operatorId) throw new Error('Veículo não está atribuído a este operador.');
 
-  const updates: Partial<Vehicle> = {
+  const returnedDate = new Date();
+
+  const updates: Partial<Vehicle> & {[key:string]: any} = {
     assignedOperatorId: null,
     pickedUpDate: null
   };
@@ -159,4 +208,42 @@ export async function returnVehicle(vehicleId: string, operatorId: string, newMi
   await updateDoc(vehicleRef, updates);
 
   await completeVehicleUsageLog(vehicleId, operatorId, newMileage);
+
+  // N8N Webhook Notification for return
+  const webhookUrl = process.env.N8N_PICKUP_WEBHOOK_URL;
+  if (webhookUrl) {
+    try {
+      const operator = await getUserById(operatorId);
+      const payload = {
+        event: 'vehicle_returned',
+        timestamp: returnedDate.toISOString(),
+        vehicle: {
+          id: vehicleId,
+          plate: vehicleData.plate,
+          make: vehicleData.make,
+          model: vehicleData.model,
+          initialMileage: vehicleData.mileage, // Mileage before return
+          finalMileage: newMileage,
+          kmDriven: newMileage - (vehicleData.mileage || newMileage),
+        },
+        operator: {
+          id: operatorId,
+          name: operator?.name || 'Desconhecido',
+          email: operator?.email || 'N/A',
+        }
+      };
+
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      console.log('Notificação de devolução de veículo enviada para o webhook.');
+
+    } catch (error) {
+      console.error('Falha ao enviar notificação de webhook de devolução:', error);
+      // Non-blocking error
+    }
+  }
 }
+

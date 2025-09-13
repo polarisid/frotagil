@@ -23,7 +23,7 @@ import { Loader2Icon, SendIcon, PrinterIcon, ArrowDownToLineIcon } from 'lucide-
 import jsPDF from 'jspdf';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { useState } from 'react';
+import React, { useState } from 'react';
 
 const WORKSHOP_CHECKLIST_ITEMS = [
     { id: 'documents', label: 'Documentação do veículo (CRLV)' },
