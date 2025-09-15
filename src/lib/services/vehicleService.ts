@@ -3,7 +3,7 @@
 'use server';
 
 import { db } from '@/lib/firebase';
-import type { Vehicle } from '@/lib/types';
+import type { Vehicle, Maintenance } from '@/lib/types';
 import {
   collection,
   doc,
@@ -18,6 +18,8 @@ import {
 } from 'firebase/firestore';
 import { completeVehicleUsageLog } from './vehicleUsageLogService'; 
 import { getUserById } from './userService';
+import { getMaintenances } from './maintenanceService';
+import { differenceInDays, isBefore, parseISO } from 'date-fns';
 
 const vehiclesCollection = collection(db, 'vehicles');
 
@@ -185,6 +187,78 @@ export async function pickUpVehicle(vehicleId: string, operatorId: string): Prom
   }
 }
 
+async function checkAndNotifyUpcomingMaintenances(vehicle: Vehicle) {
+  const webhookUrl = process.env.N8N_MAINTENANCE_WEBHOOK_URL;
+  if (!webhookUrl) {
+    return; // No webhook URL configured
+  }
+
+  const allMaintenances = await getMaintenances({ vehicleId: vehicle.id, status: 'planned' });
+  if (allMaintenances.length === 0) {
+    return;
+  }
+
+  const today = new Date();
+  const upcomingMaintenances: Maintenance[] = [];
+
+  const KM_THRESHOLD = 2000;
+  const DAYS_THRESHOLD = 7;
+
+  for (const maint of allMaintenances) {
+    let isUpcoming = false;
+    let reason = '';
+
+    // Check by KM
+    if (maint.scheduledKm && vehicle.mileage) {
+      const kmDifference = maint.scheduledKm - vehicle.mileage;
+      if (kmDifference > 0 && kmDifference <= KM_THRESHOLD) {
+        isUpcoming = true;
+        reason = `Quilometragem próxima (faltam ${kmDifference.toLocaleString('pt-BR')} km).`;
+      }
+    }
+
+    // Check by Date
+    if (maint.scheduledDate) {
+      const scheduledDate = parseISO(maint.scheduledDate);
+      if (isBefore(today, scheduledDate)) { // Only consider future dates
+        const daysDifference = differenceInDays(scheduledDate, today);
+        if (daysDifference <= DAYS_THRESHOLD) {
+          isUpcoming = true;
+          reason = reason ? `${reason} E data próxima (em ${daysDifference} dias).` : `Data próxima (em ${daysDifference} dias).`;
+        }
+      }
+    }
+    
+    if (isUpcoming) {
+      try {
+        const payload = {
+          event: 'maintenance_upcoming',
+          timestamp: new Date().toISOString(),
+          reason,
+          maintenance: maint,
+          vehicle: {
+            id: vehicle.id,
+            plate: vehicle.plate,
+            make: vehicle.make,
+            model: vehicle.model,
+            currentMileage: vehicle.mileage
+          }
+        };
+
+        await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        console.log(`Notificação de manutenção futura (${maint.id}) enviada para o webhook.`);
+      } catch (error) {
+        console.error(`Falha ao enviar notificação de webhook para manutenção futura ${maint.id}:`, error);
+      }
+    }
+  }
+}
+
+
 export async function returnVehicle(vehicleId: string, operatorId: string, newMileage: number): Promise<void> {
   const vehicleRef = doc(db, 'vehicles', vehicleId);
   const vehicleSnap = await getDoc(vehicleRef);
@@ -245,5 +319,8 @@ export async function returnVehicle(vehicleId: string, operatorId: string, newMi
       // Non-blocking error
     }
   }
+  
+  // Check for upcoming maintenances after updating vehicle mileage
+  const updatedVehicleData = { ...vehicleData, id: vehicleId, mileage: newMileage };
+  await checkAndNotifyUpcomingMaintenances(updatedVehicleData);
 }
-

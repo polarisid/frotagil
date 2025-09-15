@@ -1,6 +1,9 @@
 
+
+'use server';
+
 import { db } from '@/lib/firebase';
-import type { Incident } from '@/lib/types';
+import type { Incident, Vehicle } from '@/lib/types';
 import {
   collection,
   doc,
@@ -14,6 +17,8 @@ import {
   where,
   Timestamp
 } from 'firebase/firestore';
+import { getVehicleById } from './vehicleService';
+import { getUserById } from './userService';
 
 const incidentsCollection = collection(db, 'incidents');
 
@@ -61,11 +66,37 @@ export async function addIncident(incidentData: Omit<Incident, 'id' | 'date'> & 
     date: Timestamp.fromDate(incidentData.date),
   };
   const docRef = await addDoc(incidentsCollection, dataToSave);
-  return { 
+
+  const newIncident: Incident = { 
     id: docRef.id, 
     ...incidentData,
     date: incidentData.date.toISOString()
   };
+
+  // N8N Webhook Notification for new incident
+  const webhookUrl = process.env.N8N_INCIDENT_WEBHOOK_URL;
+  if (webhookUrl) {
+    try {
+      const vehicle = await getVehicleById(newIncident.vehicleId);
+      const payload = {
+        event: 'incident_reported',
+        timestamp: new Date().toISOString(),
+        incident: newIncident,
+        vehicle: vehicle ? { id: vehicle.id, plate: vehicle.plate, make: vehicle.make, model: vehicle.model } : null,
+      };
+
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      console.log(`Notificação de nova ocorrência (${newIncident.id}) enviada para o webhook.`);
+    } catch (error) {
+      console.error('Falha ao enviar notificação de webhook para nova ocorrência:', error);
+    }
+  }
+
+  return newIncident;
 }
 
 export async function updateIncident(id: string, incidentData: Partial<Omit<Incident, 'id'>>): Promise<void> {
@@ -108,4 +139,3 @@ export async function getWeeklyIncidentsByOperator(startDate: Date, endDate: Dat
 
   return Object.keys(incidentsByOperator).map(operatorId => ({ operatorId, count: incidentsByOperator[operatorId] }));
 }
-
